@@ -1,0 +1,683 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE MudletPackage>
+<MudletPackage version="1.001">
+	<TriggerPackage>
+		<TriggerGroup isActive="yes" isFolder="yes" isTempTrigger="no" isMultiline="no" isPerlSlashGOption="no" isColorizerTrigger="no" isFilterTrigger="no" isSoundTrigger="no" isColorTrigger="no" isColorTriggerFg="no" isColorTriggerBg="no">
+			<name>ElrohirMapper</name>
+			<script></script>
+			<triggerType>0</triggerType>
+			<conditonLineDelta>0</conditonLineDelta>
+			<mStayOpen>0</mStayOpen>
+			<mCommand></mCommand>
+			<packageName></packageName>
+			<mFgColor>#ff0000</mFgColor>
+			<mBgColor>#ffff00</mBgColor>
+			<mSoundFile></mSoundFile>
+			<colorTriggerFgColor>#000000</colorTriggerFgColor>
+			<colorTriggerBgColor>#000000</colorTriggerBgColor>
+			<regexCodeList />
+			<regexCodePropertyList />
+			<Trigger isActive="yes" isFolder="no" isTempTrigger="no" isMultiline="no" isPerlSlashGOption="no" isColorizerTrigger="no" isFilterTrigger="no" isSoundTrigger="no" isColorTrigger="no" isColorTriggerFg="no" isColorTriggerBg="no">
+				<name>!MAP Data Parser</name>
+				<script>deleteLine()
+elro.onRoom(
+  tonumber(matches[2]),
+  tonumber(matches[3]),
+  matches[4],
+  matches[5],
+  matches[6],
+  matches[7],
+  matches[8])</script>
+				<triggerType>0</triggerType>
+				<conditonLineDelta>0</conditonLineDelta>
+				<mStayOpen>0</mStayOpen>
+				<mCommand></mCommand>
+				<packageName></packageName>
+				<mFgColor>#ff0000</mFgColor>
+				<mBgColor>#ffff00</mBgColor>
+				<mSoundFile></mSoundFile>
+				<colorTriggerFgColor>#000000</colorTriggerFgColor>
+				<colorTriggerBgColor>#000000</colorTriggerBgColor>
+				<regexCodeList>
+					<string>^!MAP id=(\d+)\|from=(\d+)\|dir=([^|]+)\|name=([^|]+)\|area=([^|]+)\|exits=([^|]*)(?:\|terr=(.*))?$</string>
+				</regexCodeList>
+				<regexCodePropertyList>
+					<integer>1</integer>
+				</regexCodePropertyList>
+			</Trigger>
+		</TriggerGroup>
+	</TriggerPackage>
+	<TimerPackage />
+	<AliasPackage>
+		<AliasGroup isActive="yes" isFolder="yes">
+			<name>ElrohirMapper</name>
+			<script></script>
+			<command></command>
+			<packageName></packageName>
+			<regex></regex>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapgoto</name>
+				<script>elro.goto_target(matches[2])</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapgoto (.+)$</regex>
+				</Alias>
+				<Alias isActive="yes" isFolder="no">
+					<name>mapnear</name>
+					<script>elro.map_near(matches[2])</script>
+					<command></command>
+					<packageName></packageName>
+					<regex>^mapnear ?(.*)$</regex>
+				</Alias>
+				<Alias isActive="yes" isFolder="no">
+					<name>maprecordmove</name>
+					<script>local a = (matches[2] or ""):gsub("^%s+", ""):gsub("%s+$", "")
+elro.rec_start(a)</script>
+					<command></command>
+					<packageName></packageName>
+					<regex>^maprecordmove ?(.*)$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>maphelp</name>
+				<script>elro.map_help(matches[2])</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^maphelp(?:\s+(\S+))?$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapwipe</name>
+				<script>elro.map_wipe(matches[2])</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapwipe(?:\s+(.+))?$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapreload</name>
+				<script>elro.load_modules()</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapreload$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapsrc</name>
+				<script>local p = (matches[2] or ""):gsub("^%s+", ""):gsub("%s+$", "")
+if p == "" then
+  cecho("\n&lt;cyan&gt;[elro] src_dir = &lt;reset&gt;" .. tostring(elro.src_dir) .. "\n")
+else
+  elro.src_dir = p
+  local f = io.open(getMudletHomeDir() .. "/elro_src.txt", "w")
+  if f then f:write(p .. "\n") f:close() end
+  cecho("\n&lt;green&gt;[elro] src_dir set + persisted: &lt;reset&gt;" .. p .. "\n&lt;yellow&gt;run 'mapreload' to re-source.\n&lt;reset&gt;")
+end</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapsrc(?:\s+(.+))?$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapdump</name>
+				<script>local a = matches[2]
+if a == "sel" then elro.dumpsel() elseif a == "all" then elro.dumpall() else elro.dump() end</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapdump(?:\s+(sel|all))?$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>maprelayout_all</name>
+				<script>-- flush() hands off to the background coroutine when mapbg is on, so the
+-- completion notice comes from the driver (relayout_done); saying "done" here
+-- would be a lie about work that has not started yet.
+if elro.flush() ~= -1 then
+  cecho("\n&lt;green&gt;[elro]: full relayout done.\n&lt;reset&gt;")
+else
+  cecho("\n&lt;cyan&gt;[elro]: full relayout running in the background -- keep playing.\n&lt;reset&gt;")
+end</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^maprelayout all$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>maprelayout_this</name>
+				<script>-- Force a relayout of the CURRENT canvas, whether or not anything changed.
+-- `maprelayout` is incremental (dirty maps only) and `maprelayout all` does every
+-- map; this is the "redo THIS one now" that `mapengine eqw` used to provide as a
+-- side effect of setting the engine. Same two-line body it had: mark dirty, flush.
+elro.relayout_this()</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^maprelayout this$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapcur</name>
+				<script>elro.set_current(matches[2])</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapcur (.+)$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapcaps</name>
+				<script>elro.dump_caps()</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapcaps$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapcrossings</name>
+				<script>elro.crossings_report()</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapcrossings$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapwd</name>
+				<script>local a = matches[2]
+local function say(t) cecho("\n&lt;yellow&gt;[elro] " .. t .. "&lt;reset&gt;\n") end
+if a == "off" then elro.walkWatchdog = false ; say("walk watchdog OFF -- a runaway relayout will freeze Mudlet.")
+elseif a then elro.walkWatchdog = tonumber(a) ; say("walk watchdog: " .. tostring(elro.walkWatchdog) .. "s of ENGINE time (idle excluded).")
+else say("walk watchdog: " .. (elro.walkWatchdog == false and "off" or tostring(elro.walkWatchdog or 60) .. "s")) end</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapwd(?:\s+(off|\d+))?$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapvert</name>
+				<script>elro.vert_report(matches[2])</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapvert(?:\s+(.+))?$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>maptop</name>
+				<script>elro.dump_steptop(matches[2])</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^maptop(?:\s+(\d+))?$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapknobs</name>
+				<script>if matches[2] == "reset" then elro.reset_knobs() else elro.knob_list() end</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapknobs(?:\s+(reset))?$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapsteps</name>
+				<script>elro.dump_steps()</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapsteps$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapstep</name>
+				<script>elro.dump_step(matches[2])</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapstep(?:\s+(back|off|reset|step\s+\d+|\d+))?$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapareamin</name>
+				<script>elro.set_areamin(tonumber(matches[2]))</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapareamin (\d+)$</regex>
+				</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>maprelayout</name>
+				<script>elro.tr("maprelayout: alias fired")
+-- NOTE the pcall is on the LAUNCH only. With background mode on, flush_dirty
+-- creates the coroutine and returns immediately; every resume happens later from
+-- bg_step's timer, so this pcall is never on the coroutine's stack. That matters:
+-- Mudlet is stock Lua 5.1 and cannot yield across a C-call boundary.
+local ok, n = pcall(elro.flush_dirty)
+if not ok then
+  cecho("\n&lt;red&gt;[elro] flush_dirty ERROR: " .. tostring(n) .. "\n&lt;reset&gt;")
+elseif n == -1 then
+  if elro.bg_busy() then cecho("\n&lt;cyan&gt;[elro]: relaying out in the background -- keep playing.\n&lt;reset&gt;") end
+elseif n == 0 then cecho("\n&lt;green&gt;[elro]: nothing changed; nothing to relayout.\n&lt;reset&gt;")
+else cecho("\n&lt;green&gt;[elro]: relayed " .. tostring(n) .. " map(s).\n&lt;reset&gt;") end</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^maprelayout$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapauto</name>
+				<script>local a, n = matches[2], tonumber(matches[3] or "")
+if a == "idle" then
+  if n and n &gt;= 1 then elro.autoIdle = n end
+  cecho("\n&lt;green&gt;[elro]: auto-relayout fires after " .. elro.autoIdle ..
+        "s of standing still (it waits for a pause on purpose -- a relayout started\n" ..
+        "mid-walk has its input invalidated by your next step and is discarded).\n&lt;reset&gt;")
+else
+  elro.autoflush = (a == "on")
+  cecho("\n&lt;green&gt;[elro]: auto-relayout = " .. tostring(elro.autoflush) ..
+        (elro.autoflush and ("  (after " .. elro.autoIdle .. "s idle, in the background)") or
+         "  (use maprelayout by hand)") .. "\n&lt;reset&gt;")
+end</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapauto (on|off|idle)(?: (\d+))?$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapbg</name>
+				<script>local a = (matches[2] or ""):lower()
+local n = tonumber(matches[3] or "")
+if a == "" then elro.bg_status()
+elseif a == "cancel" then elro.bg_cancel()
+elseif a == "slice" and n and n &gt;= 5 then
+  elro.bgSlice = n
+  cecho("\n&lt;green&gt;[elro]: background slice = " .. n .. "ms per frame\n&lt;reset&gt;")
+elseif a == "gc" then
+  elro.bgGC = n or 0
+  cecho("\n&lt;green&gt;[elro]: gc-in-the-gap = " .. elro.bgGC ..
+        (elro.bgGC &gt; 0 and "  (collects between frames; the profile reports gc ms -- set it back to 0 if the worst frame does not move)"
+         or "  (off: Lua collects on its own schedule)") .. "\n&lt;reset&gt;")
+elseif a == "hook" then
+  elro.bgHook = n or 0
+  cecho("\n&lt;green&gt;[elro]: overrun hook = " .. elro.bgHook ..
+        (elro.bgHook &gt; 0 and (" VM instructions between probes -- the profile will name the SOURCE LINES" ..
+         " that ran past the frame budget. Diagnostic only; set back to 0 when done.")
+         or " (off)") .. "\n&lt;reset&gt;")
+else
+  elro.bgLayout = (a == "on")
+  cecho("\n&lt;green&gt;[elro]: background relayout = " .. tostring(elro.bgLayout) ..
+        (elro.bgLayout and "" or "  (relayouts will freeze the client again)") .. "\n&lt;reset&gt;")
+end</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapbg(?: (on|off|cancel|slice|gc|hook))?(?: (\d+))?$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapcs</name>
+				<script>if (matches[2] or "") == "reset" then
+  elro.cs_reset()
+  cecho("\n&lt;green&gt;[elro]: c-space snapshot cleared; the next relayout re-reads Mudlet.\n&lt;reset&gt;")
+end
+elro.cs_stats()</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapcs(?: (reset))?$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapdebug</name>
+				<script>elro.debug = (matches[2] == "on")
+cecho("\n&lt;green&gt;[elro]: debug = " .. tostring(elro.debug) .. "\n&lt;reset&gt;")</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapdebug (on|off)$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapmerge</name>
+				<script>local src = matches[2]
+if elro.merge == nil then elro.load_merge() end
+local cur = elro.current and getRoomArea(elro.current)
+local into = cur and elro.areaName(cur)
+if not into then
+  cecho("\n&lt;red&gt;[elro]: can't tell which area you're in; move once first.\n&lt;reset&gt;")
+elseif src == into then
+  cecho("\n&lt;red&gt;[elro]: can't merge an area into itself.\n&lt;reset&gt;")
+else
+  elro.merge[src] = into
+  elro.save_merge()
+  -- Do NOT relayout here: a merge only changes membership, and rebuilding a big merged
+  -- area is expensive. Just mark the two involved areas dirty (only ones that already have
+  -- a tab -- avoid creating a stray via addAreaName); the redirect takes effect when
+  -- recompute_areas next runs (e.g. via a manual 'maprelayout this' / 'maprelayout'), which
+  -- also re-derives dirty for any area it misses here.
+  local areas = getAreaTable() or {}
+  if areas[src] then elro.dirty[areas[src]] = true end
+  if areas[into] then elro.dirty[areas[into]] = true end
+  cecho("\n&lt;green&gt;[elro]: merged '" .. src .. "' into '" .. into ..
+        "' (marked dirty; run 'maprelayout this' to rebuild).\n&lt;reset&gt;")
+end</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapmerge (.+)$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapunmerge</name>
+				<script>local src = matches[2]
+if elro.merge == nil then elro.load_merge() end
+if elro.merge[src] then
+  local into = elro.merge[src]                 -- the target it was merged into
+  elro.merge[src] = nil
+  elro.save_merge()
+  -- Same as mapmerge: defer the rebuild. Mark the target dirty (only if it has a tab -- the
+  -- src area re-appears when recompute_areas next runs, and it dirties both then) and let the
+  -- user trigger the relayout manually.
+  local areas = getAreaTable() or {}
+  if areas[into] then elro.dirty[areas[into]] = true end
+  cecho("\n&lt;green&gt;[elro]: unmerged '" .. src .. "' (marked dirty; run 'maprelayout this' to rebuild).\n&lt;reset&gt;")
+else
+  cecho("\n&lt;red&gt;[elro]: no merge recorded for '" .. src .. "'.\n&lt;reset&gt;")
+end</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapunmerge (.+)$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapfold</name>
+				<script>local dir = elro.norm(matches[2])
+if not elro.current then
+  cecho("\n&lt;red&gt;[elro]: current room unknown; move once first.\n&lt;reset&gt;")
+else
+  local set, dest = elro.fold_branch(elro.current, dir)
+  if not set then
+    cecho("\n&lt;red&gt;[elro]: no '" .. dir .. "' exit from here.\n&lt;reset&gt;")
+  else
+    local name = elro.fold_name(elro.current, dir)
+    local n = 0
+    for id in pairs(set) do setRoomUserData(id, "fold", name) ; n = n + 1 end
+    cecho("\n&lt;green&gt;[elro]: folded " .. n .. " rooms (" .. dir ..
+          ") into '" .. name .. "'.\n&lt;reset&gt;")
+    elro.flush()
+  end
+end</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapfold (\w+)$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapunfold</name>
+				<script>local dir = elro.norm(matches[2])
+if not elro.current then
+  cecho("\n&lt;red&gt;[elro]: current room unknown; move once first.\n&lt;reset&gt;")
+else
+  local name = elro.fold_name(elro.current, dir)
+  local n = 0
+  for id in pairs(getRooms() or {}) do
+    if getRoomUserData(id, "fold") == name then
+      setRoomUserData(id, "fold", "") ; n = n + 1
+    end
+  end
+  if n &gt; 0 then
+    cecho("\n&lt;green&gt;[elro]: unfolded " .. n .. " rooms from '" .. name .. "'.\n&lt;reset&gt;")
+    elro.flush()
+  else
+    cecho("\n&lt;red&gt;[elro]: no fold '" .. name .. "' to undo.\n&lt;reset&gt;")
+  end
+end</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapunfold (\w+)$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapfolds</name>
+				<script>local counts = {}
+for id in pairs(getRooms() or {}) do
+  local f = getRoomUserData(id, "fold")
+  if f and f ~= "" then counts[f] = (counts[f] or 0) + 1 end
+end
+local any = false
+cecho("\n&lt;cyan&gt;[elro] folds:&lt;reset&gt;")
+for name, c in pairs(counts) do cecho("\n&lt;cyan&gt;  " .. name .. " (" .. c .. " rooms)&lt;reset&gt;") ; any = true end
+if not any then cecho("\n&lt;cyan&gt;  (none)&lt;reset&gt;") end
+cecho("\n")</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapfolds$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapmerges</name>
+				<script>if elro.merge == nil then elro.load_merge() end
+local any = false
+cecho("\n&lt;cyan&gt;[elro] area merges:&lt;reset&gt;")
+for a, b in pairs(elro.merge) do cecho("\n&lt;cyan&gt;  " .. a .. " -&gt; " .. b .. "&lt;reset&gt;") ; any = true end
+if not any then cecho("\n&lt;cyan&gt;  (none)&lt;reset&gt;") end
+cecho("\n")</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapmerges$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapsteal</name>
+				<script>elro.steal_rooms(matches[2])</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapsteal ([\d ,]+)$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapunsteal</name>
+				<script>elro.unsteal_rooms(matches[2])</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapunsteal ([\d ,]+)$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapsteals</name>
+				<script>local any = false
+cecho("\n&lt;cyan&gt;[elro] stolen rooms:&lt;reset&gt;")
+for id in pairs(getRooms() or {}) do
+  local a = getRoomUserData(id, "adopt")
+  if a and a ~= "" then
+    cecho("\n&lt;cyan&gt;  " .. id .. " (" .. (getRoomName(id) or "?") .. ") -&gt; " .. a .. "&lt;reset&gt;")
+    any = true
+  end
+end
+if not any then cecho("\n&lt;cyan&gt;  (none)&lt;reset&gt;") end
+cecho("\n")</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapsteals$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapouter</name>
+				<script>elro.outer_pick(matches[2])</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapouter ?(.*)$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>maplever</name>
+				<script>elro.map_lever(matches[2])</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^maplever ?(.*)$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapedges</name>
+				<script>elro.list_edges(tonumber(matches[2]))</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapedges(?:\s+(\d+))?$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapexitlock</name>
+					<script>elro.exit_lock(matches[2])</script>
+					<command></command>
+					<packageName></packageName>
+					<regex>^mapexitlock(?:\s+(\S+))?$</regex>
+				</Alias>
+				<Alias isActive="yes" isFolder="no">
+					<name>mapexitunlock</name>
+					<script>elro.exit_unlock(matches[2])</script>
+					<command></command>
+					<packageName></packageName>
+					<regex>^mapexitunlock(?:\s+(\S+))?$</regex>
+				</Alias>
+				<Alias isActive="yes" isFolder="no">
+					<name>mapmut</name>
+					<script>elro.show_mut(matches[2])</script>
+					<command></command>
+					<packageName></packageName>
+					<regex>^mapmut(?:\s+(\d+))?$</regex>
+				</Alias>
+				<Alias isActive="yes" isFolder="no">
+					<name>mapmutreset</name>
+					<script>elro.mut_reset(matches[2])</script>
+					<command></command>
+					<packageName></packageName>
+					<regex>^mapmutreset(?:\s+(\S+))?$</regex>
+				</Alias>
+				<Alias isActive="yes" isFolder="no">
+					<name>mapmaze</name>
+					<script>elro.cmd_maze(matches[2])</script>
+					<command></command>
+					<packageName></packageName>
+					<regex>^mapmaze(?:\s+(.+))?$</regex>
+				</Alias>
+				<Alias isActive="yes" isFolder="no">
+					<name>mapunmaze</name>
+					<script>elro.cmd_unmaze(matches[2])</script>
+					<command></command>
+					<packageName></packageName>
+					<regex>^mapunmaze ?(.*)$</regex>
+				</Alias>
+				<Alias isActive="yes" isFolder="no">
+					<name>mapmazes</name>
+					<script>elro.cmd_mazes()</script>
+					<command></command>
+					<packageName></packageName>
+					<regex>^mapmazes$</regex>
+				</Alias>
+				<Alias isActive="yes" isFolder="no">
+					<name>mapmazelive</name>
+					<script>elro.cmd_maze_live(matches[2])</script>
+					<command></command>
+					<packageName></packageName>
+					<regex>^mapmazelive ?(.*)$</regex>
+				</Alias>
+				<Alias isActive="yes" isFolder="no">
+					<name>mapmazefit</name>
+					<script>elro.cmd_maze_fit(matches[2])</script>
+					<command></command>
+					<packageName></packageName>
+					<regex>^mapmazefit ?(.*)$</regex>
+				</Alias>
+				<Alias isActive="yes" isFolder="no">
+					<name>mapstubs</name>
+					<script>elro.cmd_stubs(matches[2])</script>
+					<command></command>
+					<packageName></packageName>
+					<regex>^mapstubs ?(.*)$</regex>
+				</Alias>
+				<Alias isActive="yes" isFolder="no">
+					<name>mapprofile</name>
+					<script>elro.cmd_profile(matches[2])</script>
+					<command></command>
+					<packageName></packageName>
+					<regex>^mapprofile ?(.*)$</regex>
+				</Alias>
+				<Alias isActive="yes" isFolder="no">
+					<name>mapglyphs</name>
+					<script>elro.cmd_glyphs(matches[2])</script>
+					<command></command>
+					<packageName></packageName>
+					<regex>^mapglyphs(?:\s+(.+))?$</regex>
+				</Alias>
+				<Alias isActive="yes" isFolder="no">
+					<name>mapterrain</name>
+					<script>elro.cmd_terrain(matches[2])</script>
+					<command></command>
+					<packageName></packageName>
+					<regex>^mapterrain(?:\s+(.+))?$</regex>
+				</Alias>
+				<Alias isActive="yes" isFolder="no">
+					<name>mapaudit</name>
+					<script>elro.cmd_audit(matches[2])</script>
+					<command></command>
+					<packageName></packageName>
+					<regex>^mapaudit ?(.*)$</regex>
+				</Alias>
+				<Alias isActive="yes" isFolder="no">
+					<name>mapdeledge</name>
+				<script>elro.delete_edge(tonumber(matches[2]), tonumber(matches[3]))</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapdeledge (\d+) (\d+)$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapdelroom</name>
+				<script>elro.delete_room(tonumber(matches[2]))</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapdelroom (\d+)$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapsearch</name>
+				<script>elro.search_rooms(matches[2])</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapsearch (.+)$</regex>
+			</Alias>
+		</AliasGroup>
+	</AliasPackage>
+	<ActionPackage />
+	<ScriptPackage>
+		<ScriptGroup isActive="yes" isFolder="yes">
+			<name>ElrohirMapper</name>
+			<packageName></packageName>
+			<script></script>
+			<eventHandlerList />
+			<Script isActive="yes" isFolder="no">
+				<name>elro core</name>
+				<packageName></packageName>
+				<script>-- ElrohirMapper bootstrap loader.
+-- The mapper's Lua now lives in external source files (lua/core.lua,
+-- lua/layout.lua) so the bulk of the code is editable as real Lua instead of
+-- XML-entity-escaped script blobs. This script only resolves the source
+-- directory and dofile()s the modules; "mapreload" re-sources without a
+-- package reinstall.
+--
+-- Source directory (elro.src_dir) resolution, in order:
+--   1. an already-set elro.src_dir (set it before install to override)
+--   2. a path written into &lt;mudletHomeDir&gt;/elro_src.txt (first line)
+--   3. the installed package's own lua/ directory -- this is the SHIPPED path
+--   4. the dev repo default below
+elro = elro or {}
+if not elro.src_dir then
+  local ok, f = pcall(io.open, getMudletHomeDir() .. "/elro_src.txt", "r")
+  if ok and f then
+    local p = f:read("*l"); f:close()
+    if p then p = p:gsub("^%s+", ""):gsub("%s+$", "") end
+    if p and p ~= "" then elro.src_dir = p end
+  end
+end
+if not elro.src_dir then
+  -- Mudlet unpacks a package into &lt;profile&gt;/&lt;mpackage&gt;/, so an installed copy
+  -- carries its own lua/. Probed by reading modules.lua rather than assumed, so a
+  -- source checkout that was never installed falls through to the dev path below.
+  local d = getMudletHomeDir() .. "/ElrohirMapper/lua"
+  local ok, f = pcall(io.open, d .. "/modules.lua", "r")
+  if ok and f then f:close() ; elro.src_dir = d end
+end
+elro.src_dir = elro.src_dir or "c:/mud/onserver/area/map_helper/client/lua"
+
+-- The ordered module list lives in lua/modules.lua and is re-read on every load, so
+-- adding a module needs only `mapreload`, not a package reinstall. The literal list
+-- below is the fallback if that file cannot be read.
+-- Keep in sync with lua/modules.lua: a short list here loads a client missing whole
+-- engines (eqw/eqlevers/place) rather than failing, which misbehaves instead of erroring.
+elro.modules = { "geom.lua", "keys.lua", "core.lua", "tune.lua", "canvas.lua", "audit.lua",
+                 "topo.lua", "levers.lua", "eqw.lua", "eqlevers.lua", "place.lua",
+                 "walk.lua", "render.lua", "vert.lua" }
+function elro.load_modules()
+  local ok, list = pcall(dofile, elro.src_dir .. "/modules.lua")
+  if ok and type(list) == "table" then elro.modules = list end
+  for _, m in ipairs(elro.modules) do
+    local path = elro.src_dir .. "/" .. m
+    local ok, err = pcall(dofile, path)
+    if ok then
+      cecho("\n&lt;green&gt;[elro] loaded &lt;reset&gt;" .. path .. "\n")
+    else
+      cecho("\n&lt;red&gt;[elro] FAILED to load " .. path .. ":&lt;reset&gt; " .. tostring(err) .. "\n")
+    end
+  end
+end
+
+elro.load_modules()</script>
+				<eventHandlerList />
+			</Script>
+			<Script isActive="yes" isFolder="no">
+				<name>elro layout</name>
+				<packageName></packageName>
+				<script>-- ElrohirMapper layout engine: externalized to lua/layout.lua and loaded by
+-- the bootstrap in the "elro core" script. This script body is intentionally
+-- empty so a package reinstall does not run stale embedded code.</script>
+				<eventHandlerList />
+			</Script>
+		</ScriptGroup>
+	</ScriptPackage>
+	<KeyPackage />
+	<HelpPackage>
+		<helpURL></helpURL>
+	</HelpPackage>
+</MudletPackage>

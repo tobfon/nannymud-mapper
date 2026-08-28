@@ -1,0 +1,100 @@
+#!/bin/sh
+# Mapper client pre-commit: reject the commit if any staged Lua file fails to
+# parse under LuaJIT. Checks the STAGED blob (not the working tree) so a clean
+# parse is actually what gets committed. Install with tools/install-hooks.sh.
+#
+# Skips silently if luajit is not on PATH (so the repo still works elsewhere).
+
+if ! command -v luajit >/dev/null 2>&1; then
+  exit 0
+fi
+
+fail=0
+# staged Added/Copied/Modified *.lua files
+for f in $(git diff --cached --name-only --diff-filter=ACM -- '*.lua'); do
+  # parse the staged content exactly (loadstring = LuaJIT/5.1 syntax check)
+  err=$(git show ":$f" | luajit -e \
+    'local s=io.read("*a"); local ok,e=loadstring(s, "@'"$f"'"); if not ok then io.stderr:write(tostring(e).."\n"); os.exit(1) end' 2>&1)
+  if [ $? -ne 0 ]; then
+    echo "luajit parse error in $f:" >&2
+    echo "  $err" >&2
+    fail=1
+  fi
+done
+
+if [ "$fail" -ne 0 ]; then
+  echo "" >&2
+  echo "pre-commit: Lua syntax check failed. Fix the error(s) above, or" >&2
+  echo "bypass with 'git commit --no-verify' if you know what you're doing." >&2
+  exit 1
+fi
+
+# ---- YIELD SAFETY: no NEW pcall around one of our own functions -------------
+# Mudlet runs STOCK LUA 5.1, which cannot yield across a C-call boundary. The
+# background relayout (elro.bg_*) yields from deep inside the layout engine, so a
+# pcall anywhere between coroutine.resume and an elro.bg_tick makes that tick die
+# at runtime with "attempt to yield across C-call boundary" -- and ONLY in
+# background mode, so a foreground test will not catch it, and LuaJIT (the only
+# interpreter available locally) permits the yield and so cannot reproduce it
+# either. That combination is why this is a commit hook and not a test.
+#
+# pcall around a MUDLET api (addCustomLine, highlightRoom, ...) is fine and
+# common -- those never reach our code. The dangerous shape is pcall(elro.X).
+# Two exist and are known-safe; anything else needs a human decision:
+#   elro.topo_cross  -- pure combinatorial pass, deliberately has no tick in it
+#   elro.wire_cross  -- the sibling prover, same rationale: it reaches no bg_tick (only
+#                       elro.tr, elro.wire_lt and its own _wc* fields), and both call sites
+#                       (canvas.lua, render.lua) bracket it with elro._noYield anyway
+#   elro.compose_spqr -- only on layout_eqw's FOREGROUND branch; the background
+#                        branch calls it directly and the driver clears eqwalk
+#   elro.near_scan   -- mapnear's map sweep: a user command only, never on a layout
+#                       path, and its body calls no elro.* FUNCTION at all (only the
+#                       elro.terrain / elro.nearKeep table reads and Mudlet C calls),
+#                       so there is nothing under it that could yield
+#
+# Scoped to lua/ -- the code that actually runs inside Mudlet. analysis/ harnesses
+# are exempt on purpose: they pcall our functions deliberately, to PROVE the rule
+# (test_bgcs.lua wraps pcall to emulate the 5.1 restriction LuaJIT does not have).
+ALLOWED='elro\.topo_cross|elro\.compose_spqr|elro\.wire_cross|elro\.near_scan'
+for f in $(git diff --cached --name-only --diff-filter=ACM -- '*/client/lua/*.lua'); do
+  bad=$(git show ":$f" | grep -n 'pcall( *elro\.' | grep -Ev "pcall\( *($ALLOWED)\b")
+  if [ -n "$bad" ]; then
+    echo "pre-commit: pcall around our own function in $f -- a yield underneath it" >&2
+    echo "  will fail at runtime under the background relayout (stock Lua 5.1)." >&2
+    echo "$bad" | sed 's/^/  /' >&2
+    echo "  If it provably cannot reach elro.bg_tick, add it to ALLOWED in tools/pre-commit." >&2
+    fail=1
+  fi
+done
+
+[ "$fail" -ne 0 ] && exit 1
+
+# ---- REGRESSION GATE (fast tier, ~4s) --------------------------------------
+# The slow tier (tools/run-gate.sh full, ~27s) is manual: there is no remote, so a
+# pre-push hook would never fire. Run it by hand before a structural change.
+# Only when engine code is staged: a doc- or dump-only commit cannot move a layout.
+# Bypass for a deliberate work-in-progress commit with SKIP_GATE=1 git commit ...
+#
+# NOTE: this runs the WORKING TREE, not the staged blob -- the harnesses dofile()
+# whole modules and a corpus, which cannot be fed from the index cheaply. With a
+# partially staged change the result describes what you have, not what you commit,
+# so it warns below when the two differ.
+if [ -z "$SKIP_GATE" ]; then
+  root=$(git rev-parse --show-toplevel)
+  gate="$root/area/map_helper/client/tools/run-gate.sh"
+  staged_engine=$(git diff --cached --name-only --diff-filter=ACM \
+                  -- '*/client/lua/*.lua' '*/client/map_helper.xml')
+  if [ -n "$staged_engine" ] && [ -f "$gate" ]; then
+    if [ -n "$(git diff --name-only -- '*/client/lua/*.lua' '*/client/map_helper.xml')" ]; then
+      echo "pre-commit: note -- lua/ has unstaged edits; the gate tested the working tree." >&2
+    fi
+    sh "$gate" fast || {
+      echo "" >&2
+      echo "pre-commit: regression gate failed (see above). Bypass with SKIP_GATE=1" >&2
+      echo "or 'git commit --no-verify' if you know what you're doing." >&2
+      exit 1
+    }
+  fi
+fi
+
+exit 0

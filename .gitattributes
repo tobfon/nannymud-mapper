@@ -1,0 +1,5 @@
+# Copied into the export as .gitattributes. The MUD repo is on Windows with CRLF
+# checkout; the published tree stays LF so a clone on any platform reads the same
+# bytes the package ships.
+* text=auto eol=lf
+*.mpackage binary

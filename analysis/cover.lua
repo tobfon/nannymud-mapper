@@ -1,0 +1,17 @@
+local f = assert(io.open("analysis/cover_impl.lua")) local s = f:read("*a") f:close() assert(loadstring(("\n"):rep(50000) .. s, "@analysis/cover_impl.lua"))()
+-- ^^^ THE WHOLE LOADER IS ONE PHYSICAL LINE, ON PURPOSE. Read analysis/cover_impl.lua for the tool.
+--
+-- LINE COVERAGE for the layout engine (`analysis/cover.lua`, run from area/map_helper/client):
+--
+--   luajit analysis/cover.lua <out.cov> <dump> [knobspec ...]
+--
+-- WHY THE ONE-LINER: coverage is collected with a `debug.sethook(f, "l")` line hook, and the hook
+-- has no cheap way to ask WHICH FILE a line belongs to -- `debug.getinfo` per line event is far more
+-- expensive than the hook itself. So instead of asking, we make the line numbers globally unique:
+-- every chunk is loaded through `loadstring` with N leading newlines, giving each file a disjoint
+-- band (see OFFSETS in cover_impl.lua). The hook is then just `cov[line] = true`.
+--
+-- That trick only works if NOTHING executes outside a band. This loader is the one chunk that cannot
+-- offset itself, so it is a single line: line 1 runs once, before the hook exists, and the lines you
+-- are reading now are comments and never fire a line event. Adding a second statement here would
+-- silently mark a layout.lua line as covered.
