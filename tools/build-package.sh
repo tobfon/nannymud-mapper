@@ -30,7 +30,7 @@ root = os.getcwd()
 files = ['config.lua', 'map_helper.xml']
 # modules.lua puts several entries on one line, so scan the whole file, not line-wise
 mods = re.findall(r'"([A-Za-z_0-9]+\.lua)"',
-                  open(os.path.join(root, 'lua', 'modules.lua')).read())
+                  open(os.path.join(root, 'lua', 'modules.lua'), encoding='utf-8').read())
 seen = set()
 order = []
 for m in mods:
@@ -43,9 +43,9 @@ files.append(os.path.join('lua', 'modules.lua'))
 # config.lua's version is what a user sees; elro.VERSION is what the client reports
 # to the server in its handshake. If they drift, the server names the wrong version.
 cfg = re.search(r'version\s*=\s*"([^"]+)"',
-                open(os.path.join(root, 'config.lua')).read())
+                open(os.path.join(root, 'config.lua'), encoding='utf-8').read())
 run = re.search(r'elro\.VERSION\s*=\s*"([^"]+)"',
-                open(os.path.join(root, 'lua', 'core.lua')).read())
+                open(os.path.join(root, 'lua', 'core.lua'), encoding='utf-8').read())
 if not cfg or not run or cfg.group(1) != run.group(1):
     print('build-package: version mismatch -- config.lua %s vs elro.VERSION %s'
           % (cfg and cfg.group(1), run and run.group(1)))
