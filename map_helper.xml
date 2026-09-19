@@ -714,15 +714,19 @@ elro.modules = { "geom.lua", "keys.lua", "core.lua", "tune.lua", "canvas.lua", "
 function elro.load_modules()
   local ok, list = pcall(dofile, elro.src_dir .. "/modules.lua")
   if ok and type(list) == "table" then elro.modules = list end
+  -- One line for the whole load; a module that fails still gets its own, in red.
+  local failed = 0
   for _, m in ipairs(elro.modules) do
     local path = elro.src_dir .. "/" .. m
     local ok, err = pcall(dofile, path)
-    if ok then
-      cecho("\n&lt;green&gt;[elro] loaded &lt;reset&gt;" .. path .. "\n")
-    else
+    if not ok then
+      failed = failed + 1
       cecho("\n&lt;red&gt;[elro] FAILED to load " .. path .. ":&lt;reset&gt; " .. tostring(err) .. "\n")
     end
   end
+  cecho(string.format("\n&lt;green&gt;[elro] ElrohirMapper %s loaded%s. 'maphelp' is this client's help; in the game it is 'help maplink'.&lt;reset&gt;\n",
+        tostring(elro.VERSION or "?"),
+        failed &gt; 0 and (" with " .. failed .. " module(s) FAILED") or ""))
   -- AND DROP THE C-SPACE SNAPSHOT. `elro` survives a reload on purpose, so
   -- its cached view of Mudlet's rooms survives with it -- and a reload is
   -- exactly what you reach for when the map behaves impossibly. A room deleted

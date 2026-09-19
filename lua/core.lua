@@ -9,7 +9,7 @@ elro.dirty = elro.dirty or {}     -- areaID -> true: needs relayout
 elro.ns_cap = elro.ns_cap or 5000  -- max rooms for the O(V^2 E) NS engine; above -> flood
 -- Reported to the server by the handshake in onRoom. Kept in step with config.lua's
 -- `version` by tools/build-package.sh, which refuses to build if the two differ.
-elro.VERSION = "1.1.0"
+elro.VERSION = "1.1.1"
 
 elro.relayout_timer = elro.relayout_timer or nil
 -- min internally-connected cluster size for a server-area to keep its own tab;
@@ -4131,13 +4131,19 @@ end
 elro.UPDATE_URL = "https://github.com/tobfon/nannymud-mapper/releases/latest/download/ElrohirMapper.mpackage"
 
 function elro.update_swap(path)
+  -- ONE swap at a time. Seen live: the swap ran twice (a second download event,
+  -- or the alias present twice), and a second uninstall racing the first
+  -- install is how a player ends up with no package.
+  if elro._updBusy then return end
+  elro._updBusy = true
   tempTimer(0.1, function()
-    cecho("\n<cyan>[elro]: removing the old package...\n<reset>")
     pcall(uninstallPackage, "ElrohirMapper")
     tempTimer(1, function()
       local ok, err = pcall(installPackage, path)
+      elro._updBusy = nil
       if ok then
-        cecho("\n<green>[elro]: installed. Your map is untouched; 'maphelp' shows the new version.\n<reset>")
+        -- the loader has just printed the version line; this only adds the reassurance
+        cecho("<green>[elro]: updated. Your map is untouched.\n<reset>")
       else
         cecho("\n<red>[elro]: the install failed: " .. tostring(err) ..
               "\n  Drag " .. path .. " onto Mudlet to finish by hand.\n<reset>")
@@ -4147,6 +4153,13 @@ function elro.update_swap(path)
 end
 
 function elro.cmd_update(arg)
+  -- Once per half minute. Seen live and never explained: the command ran twice
+  -- for one typed line. A second run would start a second download into the same
+  -- file, and a second swap. Time-boxed so a download that never reports back
+  -- cannot lock the command for the rest of the session.
+  local now = os.time()
+  if elro._updAt and now - elro._updAt < 30 then return end
+  elro._updAt = now
   arg = (arg or ""):gsub("^%s+", ""):gsub("%s+$", "")
   if type(installPackage) ~= "function" or type(uninstallPackage) ~= "function" then
     cecho("\n<red>[elro]: this Mudlet cannot install packages from a script.\n<reset>") return
@@ -4168,13 +4181,17 @@ function elro.cmd_update(arg)
   for _, k in ipairs({ "_updDone", "_updErr" }) do
     if elro[k] then pcall(killAnonymousEventHandler, elro[k]) ; elro[k] = nil end
   end
+  -- `_updWant` makes each handler one-shot by itself, whether or not the kill works
+  elro._updWant = path
   elro._updDone = registerAnonymousEventHandler("sysDownloadDone", function(_, file)
-    if file ~= path then return end
+    if file ~= path or elro._updWant ~= path then return end
+    elro._updWant = nil
     pcall(killAnonymousEventHandler, elro._updDone) ; elro._updDone = nil
     elro.update_swap(path)
   end)
   elro._updErr = registerAnonymousEventHandler("sysDownloadError", function(_, why, file)
-    if file and file ~= path then return end
+    if (file and file ~= path) or elro._updWant ~= path then return end
+    elro._updWant = nil
     pcall(killAnonymousEventHandler, elro._updErr) ; elro._updErr = nil
     cecho("\n<red>[elro]: the download failed (" .. tostring(why) ..
           "). Nothing was changed.\n<reset>")
@@ -5026,8 +5043,11 @@ function elro.map_help(arg)
       end
     end
   end
-  cecho("\n<cyan>ElrohirMapper<reset>  --  "
+  cecho("\n<cyan>ElrohirMapper " .. tostring(elro.VERSION) .. "<reset>  --  "
         .. (adv and "diagnostics and tuning" or "everyday commands") .. "\n")
+  -- two help systems, and a new player cannot tell which is which
+  cecho("<cyan>  These commands belong to this Mudlet package and are never sent to the game.\n"
+        .. "  The game's own side is 'help maplink' (switching the stream on and off).<reset>\n")
   emit(adv and HELP_ADV or HELP_BASIC)
   if not adv then
     local n = 0
