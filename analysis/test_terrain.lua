@@ -77,7 +77,7 @@ ok(pick("outdoors,forest,road") == pick("road,forest,outdoors"),
 print("table integrity")
 local seen, envs, n = {}, {}, 0
 local GROUPS = { aid = 1, travel = 1, sacred = 1, way = 1, water = 1,
-                 land = 1, built = 1, surf = 1, fallback = 1 }
+                 land = 1, built = 1, surf = 1, fallback = 1, maze = 1 }
 for name, t in pairs(elro.terrain) do
   n = n + 1
   ok(not seen[t.rank], "rank " .. t.rank .. " is unique (" .. name ..
@@ -96,7 +96,7 @@ for name, t in pairs(elro.terrain) do
   ok(type(t.col) == "table" and #t.col == 3, name .. " has an rgb triple")
   for _, v in ipairs(t.col) do ok(v >= 0 and v <= 255, name .. " colour component in range") end
 end
-ok(n == 38, "38 terrains defined (got " .. n .. ")")
+ok(n == 39, "39 terrains defined (got " .. n .. ")")
 
 -- ranks are a dense 1..n ordering, so "lower wins" has no gaps to reason about
 for i = 1, n do ok(seen[i], "rank " .. i .. " is used") end
@@ -280,6 +280,31 @@ elro.terrainOn = false
 ok(elro.terrain_dot_only("port") == false, "mapterrain off drops the claim too -- it is a terrain rule")
 elro.terrainOn = true
 setRoomChar(8, "")
+
+-- ---- a folded maze: violet cell, gold "?" ---------------------------------
+-- `terr=maze` arrives alone and with no exits, so the "?" is forced and the
+-- gold falls out of there being no secondary terrain to tint it.
+print("maze node")
+deleteRoom(9) ; addRoom(9)
+setRoomUserData(9, "terr", "maze")
+ok(elro.is_maze_terr("maze"), "the maze token is recognised")
+ok(elro.is_maze_terr("road,forest") == false, "an ordinary csv is not a maze")
+ok(elro.glyph_char(9) == "?", "a maze node shows ? with no exits to derive it from")
+local mcell, mdot = elro.terrain_roles("maze")
+ok(is(mcell.col, elro.terrain.maze.col), "the cell is the maze violet")
+ok(mdot == nil, "and nothing is drawn on top of it")
+hiCol, chCol = nil, nil
+elro.glyph_paint(9, elro.glyph_char(9))
+ok(is(chCol, GOLD), "so the ? keeps the default gold, which reads on the violet")
+-- The PAINT path too, not just glyph_char: asserting glyph_char alone passed
+-- while the map showed no ? at all.
+setRoomChar(9, "")
+elro.terrain_paint(9)
+ok(getRoomChar(9) == "?", "terrain_paint CREATES the ? on a room that had no glyph")
+ok(getRoomEnv(9) == elro.terrain.maze.env, "...on the maze's own violet env")
+elro.glyphs = false
+ok(elro.glyph_char(9) == "", "mapglyphs off silences the maze ? like any other")
+elro.glyphs = true
 
 highlightRoom, unHighlightRoom, setRoomCharColor = realHi2, realUn2, realCC
 

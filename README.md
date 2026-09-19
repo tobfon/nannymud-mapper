@@ -22,13 +22,24 @@ together before pasting:
 lua installPackage("https://github.com/tobfon/nannymud-mapper/releases/latest/download/ElrohirMapper.mpackage")
 ```
 
-**2. The link, in game.** The package listens for events the server only sends to players
-carrying the cartographer's link. Get one, then:
+**Updating.** Type `mapupdate`. It downloads the newest release and swaps it in; if the download
+fails nothing is changed. Your map lives in the profile, not in the package, and is kept. The
+game tells you when a newer version is out. By hand: Mudlet refuses to install over a package
+that is already there ("package ElrohirMapper is already installed"), so remove `ElrohirMapper`
+under Toolbox → Package Manager first, then install the new one.
+
+**2. Switch the stream on, in game.** The server sends the events only to players who asked
+for them, because without this package they are a line of text on every move:
 
 ```
-maplink          what it is doing
+maplink on       start streaming; remembered when you log in again
+maplink          what it is doing, and whether this package has answered
 maplink off      stop streaming
 ```
+
+`help maplink` in game has the rest. The `maplink` command is being rolled out; if the game
+answers "What?", you do not have it yet, and Elrohir can hand it to you. Not every area is
+mapped: the administrators open them one at a time.
 
 Then walk. Type `maphelp` for the commands, `maphelp advanced` for the diagnostic ones.
 

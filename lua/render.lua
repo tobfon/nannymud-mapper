@@ -631,6 +631,9 @@ function elro.draw_area_stubs(roomMap)
       local rx, ry = getRoomCoordinates(r)
       if rx then
         local ra = getRoomArea(r)
+        -- An exit the server will not map beyond is linked to the placeholder room
+        -- in the "off the map" area (core.lua, off_record), so it is drawn here
+        -- like any other exit that leaves the canvas.
         for dname, dest in pairs(getRoomExits(r) or {}) do
           local d = elro.norm(dname)
           local del = elro.delta[d]

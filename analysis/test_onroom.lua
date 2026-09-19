@@ -108,6 +108,27 @@ elro.cs_reset() ; elro.dirty = {}
 elro.onRoom(81, 80, "east", "a lounge" .. E .. "[38;40;0m", "gurk", "east,west", "")
 eq(getRoomName(81), "a lounge", "onRoom stores the name without the escape")
 
+-- ---- a room DELETED IN THE GUI, then walked into again -----------------------
+-- The symptom is ONE-WAY EDGES: nothing hooks a GUI deletion, so the neighbour's
+-- c-space record still names the deleted id and the "already have this edge"
+-- test skips the write.
+reset_map()
+local a6 = addAreaName("gurk")
+addRoom(90) ; setRoomArea(90, a6) ; setRoomCoordinates(90, 5, 5, 0)
+elro.cs_reset() ; elro.dirty = {}
+elro.onRoom(91, 90, "east", "the gate", "gurk", "east,west", "")
+eq(getRoomExits(90)["east"], 91, "the edge is there to begin with")
+elro.cs_room(90)                          -- materialize the NEIGHBOUR, as walking does
+-- TWO CALLS: the stub's deleteRoom is a bare table removal, while Mudlet also
+-- drops every exit INTO the room. Without the second the test is vacuous.
+deleteRoom(91) ; setExit(90, -1, "east")
+eq(getRoomExits(90)["east"], nil, "Mudlet took the neighbour's exit with it")
+eq(elro.cs[90] ~= nil, true, "...but the neighbour's stale record survives")
+elro.onRoom(91, 90, "east", "the gate", "gurk", "east,west", "")
+eq(roomExists(91), true, "walking in again recreates the room")
+eq(getRoomExits(90)["east"], 91, "...and the edge INTO it is written, not skipped")
+eq(getRoomExits(91)["west"], 90, "...with the advertised reverse edge as well")
+
 cecho = realcecho
 print(string.format("test_onroom: %d check(s), %d failure(s)", checks, fail))
 os.exit(fail == 0 and 0 or 1)

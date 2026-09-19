@@ -9,7 +9,7 @@ elro.dirty = elro.dirty or {}     -- areaID -> true: needs relayout
 elro.ns_cap = elro.ns_cap or 5000  -- max rooms for the O(V^2 E) NS engine; above -> flood
 -- Reported to the server by the handshake in onRoom. Kept in step with config.lua's
 -- `version` by tools/build-package.sh, which refuses to build if the two differ.
-elro.VERSION = "1.0.0"
+elro.VERSION = "1.1.0"
 
 elro.relayout_timer = elro.relayout_timer or nil
 -- min internally-connected cluster size for a server-area to keep its own tab;
@@ -209,6 +209,7 @@ function elro.cs_room(id)
     adopt = getRoomUserData(id, "adopt") or "",
     fold  = getRoomUserData(id, "fold")  or "",
     via   = getRoomUserData(id, "via")   or "",
+    mh    = getRoomUserData(id, "mh")    or "",
   }
   elro.cs[id] = rec
   return rec
@@ -456,9 +457,179 @@ function elro.outer_pick(arg)
   elro.flush()
 end
 
--- follow merge redirects (transitively, cycle-guarded) to the final area name
-function elro.resolve_area(name)
+-- ---- server merge hints ----------------------------------------------------
+-- The server may SUGGEST a canvas for a room: `mha=<area>` for every room of the
+-- server area (kept once per map, in elro.hintArea) or `mh=<area>` for this room
+-- only (room userdata "mh"). ⛔ A hint is DATA, never an action: the canvas is
+-- always computed from it plus the player's say, so re-walking a room cannot
+-- undo an unmerge, and rooms explored after an unmerge follow it too. The
+-- player's say: elro.hintsOff (follow none) and elro.hintIgnore[sarea].
+function elro.kv_load(key)
+  local out = {}
+  if type(getMapUserData) ~= "function" then return out end
+  local ok, s = pcall(getMapUserData, key)
+  if ok and type(s) == "string" then
+    for line in string.gmatch(s, "[^\n]+") do
+      local a, b = string.match(line, "^(.-)\t(.*)$")
+      if a and a ~= "" then out[a] = b end
+    end
+  end
+  return out
+end
+
+function elro.kv_save(key, t)
+  if type(setMapUserData) ~= "function" then return end
+  local parts = {}
+  for a, b in pairs(t or {}) do parts[#parts + 1] = a .. "\t" .. tostring(b) end
+  table.sort(parts)
+  pcall(setMapUserData, key, table.concat(parts, "\n"))
+end
+
+function elro.load_hints()
+  elro.hints_loaded = true
+  elro.hintArea = elro.kv_load("elro.hintArea")
+  elro.hintIgnore = elro.kv_load("elro.hintIgnore")
+  elro.hintsOff = false
+  if type(getMapUserData) == "function" then
+    local ok, s = pcall(getMapUserData, "elro.hintsOff")
+    elro.hintsOff = (ok and s == "1") or false
+  end
+end
+
+function elro.save_hints()
+  elro.kv_save("elro.hintArea", elro.hintArea)
+  elro.kv_save("elro.hintIgnore", elro.hintIgnore)
+  if type(setMapUserData) == "function" then
+    pcall(setMapUserData, "elro.hintsOff", elro.hintsOff and "1" or "")
+  end
+end
+
+-- The hint in force for a room of server area `sa` whose own hint is `mh`, or nil.
+function elro.hint_for(sa, mh)
+  if not elro.hints_loaded then elro.load_hints() end
+  if elro.hintsOff or elro.hintIgnore[sa] then return nil end
+  local h = elro.hintArea[sa]
+  if h and h ~= "" then return h end
+  if mh and mh ~= "" then return mh end
+  return nil
+end
+
+-- An unmerged area keeps its own tab whatever its size: without the pin the
+-- area_min fold puts a half-explored one straight back, which reads as the
+-- unmerge not having worked.
+function elro.hint_pinned(sa)
+  if not elro.hints_loaded then elro.load_hints() end
+  return elro.hintIgnore[sa] ~= nil
+end
+
+-- Every server hint the map knows: sarea -> { target, rooms = n or nil }. An
+-- area-wide one has no room count; a path-scoped one counts the rooms carrying it.
+function elro.hint_table()
+  if not elro.hints_loaded then elro.load_hints() end
+  local out = {}
+  for sa, t in pairs(elro.hintArea) do out[sa] = { target = t } end
+  for id in pairs(elro.cs_all_rooms()) do
+    local rec = elro.cs_room(id)
+    if rec and rec.mh ~= "" and not out[rec.sarea] then
+      out[rec.sarea] = { target = rec.mh, rooms = 0 }
+    end
+    if rec and rec.mh ~= "" and out[rec.sarea].rooms then
+      out[rec.sarea].rooms = out[rec.sarea].rooms + 1
+    end
+  end
+  return out
+end
+
+-- After a change of the player's say: every room is re-resolved by the relayout's
+-- recompute_areas, which also dirties the canvases that gain or lose rooms.
+function elro.hints_changed(msg)
+  elro.save_hints()
+  cecho("\n<green>[elro]: " .. msg .. "\n<reset>")
+  elro.flush_dirty()
+end
+
+-- mapmerges: the player's own merges and the server's hints, in one list.
+function elro.cmd_merges()
+  if elro.merge == nil then elro.load_merge() end
+  local any = false
+  cecho("\n<cyan>[elro] area merges:<reset>")
+  for a, b in pairs(elro.merge) do
+    cecho("\n<cyan>  " .. a .. " -> " .. b .. "   (yours)<reset>") ; any = true
+  end
+  for sa, h in pairs(elro.hint_table()) do
+    local state = elro.merge[sa] and "overruled by your own merge"
+      or (elro.hintsOff and "ignored: maphints is off")
+      or (elro.hintIgnore[sa] and "ignored: you unmerged it")
+      or "followed"
+    cecho(string.format("\n<cyan>  %s -> %s   (server hint%s, %s)<reset>", sa, h.target,
+          h.rooms and (", " .. h.rooms .. " room(s)") or "", state))
+    any = true
+  end
+  if not any then cecho("\n<cyan>  (none)<reset>") end
+  cecho("\n")
+end
+
+-- mapunmerge <area>: undo a merge, whoever made it.
+function elro.cmd_unmerge(src)
+  if elro.merge == nil then elro.load_merge() end
+  src = (src or ""):gsub("^%s+", ""):gsub("%s+$", "")
+  if elro.merge[src] then
+    local into = elro.merge[src]
+    elro.merge[src] = nil
+    elro.save_merge()
+    local areas = getAreaTable() or {}
+    if areas[into] then elro.dirty[areas[into]] = true end
+    cecho("\n<green>[elro]: unmerged '" .. src .. "' (marked dirty; run 'maprelayout this' to rebuild).\n<reset>")
+    return
+  end
+  local h = elro.hint_table()[src]
+  if h and not elro.hintIgnore[src] then
+    elro.hintIgnore[src] = "1"
+    elro.hints_changed("'" .. src .. "' keeps its own map from now on; the server's hint (" ..
+                  h.target .. ") is ignored. 'maphints on " .. src .. "' follows it again.")
+    return
+  end
+  cecho("\n<red>[elro]: no merge recorded for '" .. src .. "'.\n<reset>")
+end
+
+-- maphints                 : list the server's hints
+-- maphints on|off          : follow them at all (default on)
+-- maphints on|off <area>   : follow or ignore the hint for one area
+function elro.cmd_hints(arg)
+  if not elro.hints_loaded then elro.load_hints() end
+  arg = (arg or ""):gsub("^%s+", ""):gsub("%s+$", "")
+  local sw, area = arg:match("^(o[nf]f?)%s*(.*)$")
+  if arg == "" then
+    cecho("\n<cyan>[elro]: server merge hints are " ..
+          (elro.hintsOff and "OFF (none is followed)" or "ON") .. ".<reset>")
+    elro.cmd_merges() ; return
+  end
+  if sw ~= "on" and sw ~= "off" then
+    cecho("\n<yellow>[elro]: usage: maphints [on|off [<area>]]\n<reset>") return
+  end
+  if area == "" then
+    elro.hintsOff = (sw == "off")
+    elro.hints_changed("server merge hints are " .. (elro.hintsOff and "OFF: every area keeps the server's own name."
+                  or "ON: areas follow the server's suggestions, except those you unmerged."))
+  elseif sw == "off" then
+    elro.hintIgnore[area] = "1"
+    elro.hints_changed("the hint for '" .. area .. "' is ignored; it keeps its own map.")
+  else
+    elro.hintIgnore[area] = nil
+    elro.hints_changed("the hint for '" .. area .. "' is followed again.")
+  end
+end
+
+-- The canvas name for server area `name`: the player's own merge first, else the
+-- server's hint, then merge redirects followed transitively (cycle-guarded).
+-- ONE definition, read by onRoom and recompute_areas alike: two that disagree
+-- flip a room's tab on every entry.
+function elro.resolve_area(name, mh)
   local m = elro.merge or {}
+  if not m[name] then
+    local h = elro.hint_for(name, mh)
+    if h then name = h end
+  end
   local seen = {}
   while m[name] and not seen[name] do seen[name] = true ; name = m[name] end
   return name
@@ -957,11 +1128,37 @@ function elro.unmaze_scope(ids, folds)
   return dirty
 end
 
--- mapunmaze [<id|here>,...]: bare releases the WHOLE submap the current room is
--- in; with room ids (or `here`) it releases only those, leaving the rest folded --
--- for a cluster detection took one room too many into.
+-- mapunmaze [all | <id|here>,...]: bare releases the WHOLE submap the current
+-- room is in; with room ids (or `here`) it releases only those, leaving the rest
+-- folded -- for a cluster detection took one room too many into; `all` releases
+-- every submap on the map (see the note in the body: it clears the override
+-- rather than setting maze=0).
 function elro.cmd_unmaze(arg)
   arg = (arg or ""):gsub("^%s+", ""):gsub("%s+$", "")
+  -- `all` CLEARS the maze override; the per-room forms SET maze=0. The mut
+  -- counters survive either way -- `mapmutreset all` is the full reset.
+  if arg == "all" then
+    local freed, folds = {}, {}
+    for r in pairs(elro.cs_all_rooms()) do
+      local fold = elro.unmaze_room(r)
+      if fold then
+        setRoomUserData(r, "maze", "")   -- not "0": no permanent exclude
+        elro.cs_dirty(r)
+        freed[#freed + 1] = r ; folds[fold] = true
+      end
+    end
+    local nf = 0 ; for _ in pairs(folds) do nf = nf + 1 end
+    if #freed == 0 then
+      cecho("\n<yellow>[elro]: no maze submaps to release.\n<reset>") ; return
+    end
+    cecho(string.format("\n<green>[elro]: released %d room(s) from %d maze submap(s).\n" ..
+          "  The maze override is CLEARED, not set to 0, so detection may find them\n" ..
+          "  again -- 'mapmutreset all' if you want the counters gone too.\n<reset>",
+          #freed, nf))
+    for a in pairs(elro.unmaze_scope(freed, folds)) do elro.dirty[a] = true end
+    elro.flush_dirty()
+    return
+  end
   if arg ~= "" then
     local ids, bad = {}, {}
     for tok in string.gmatch(arg, "[^,%s]+") do
@@ -1700,10 +1897,68 @@ function elro.markDirty(areaID, urgent)
   end
 end
 
+-- ---- off the map -----------------------------------------------------------
+-- While the player is somewhere the server will not map, the marker must not
+-- sit on the last mapped room: it reads as "you are here" and is wrong. Mudlet
+-- has no way to show NO player room, so the view goes to one placeholder room in
+-- a canvas of its own. `elro.current` is left alone on purpose: it is the halo's
+-- and the walker's anchor, and clearing it would resync every stub on the map at
+-- each step off it. The id sits below MAZE_VBASE and above any real room.
+elro.OFF_ROOM = 899999
+elro.OFF_AREA = "off the map"
+-- Two rows, one label each (a label is a single line). A label's position is its
+-- top-left corner, and at zoom 30 / 12pt a character is about 0.23 map units
+-- wide, so x = -chars * 0.115 centres a row over the room at (0,0). Bump the
+-- version when any of this changes and the old labels are replaced.
+elro.OFF_LABEL_V = "3"
+elro.OFF_LABEL = {
+  { "In the dark, or off the map.",        2.4 },
+  { "It resumes at the next known room.",  1.7 },
+}
+
+function elro.off_room()
+  local id = elro.OFF_ROOM
+  local made = not roomExists(id)
+  local aid
+  if made then
+    addRoom(id)
+    aid = elro.areaId(elro.OFF_AREA)
+    setRoomArea(id, aid)
+    setRoomCoordinates(id, 0, 0, 0)
+    if type(setRoomName) == "function" then pcall(setRoomName, id, "Off the map") end
+    -- adopt pins it to its own tab; VIA_NONE keeps a one-room area from folding
+    setRoomUserData(id, "sarea", elro.OFF_AREA)
+    setRoomUserData(id, "adopt", elro.OFF_AREA)
+    setRoomUserData(id, "via", elro.VIA_NONE)
+    elro.cs_lists_dirty() ; elro.cs_dirty(id, aid)
+  end
+  -- The label is versioned, so a reworded one replaces the old on an existing map.
+  if getRoomUserData(id, "lblv") ~= elro.OFF_LABEL_V and type(createMapLabel) == "function" then
+    aid = aid or getRoomArea(id)
+    if type(getMapLabels) == "function" and type(deleteMapLabel) == "function" then
+      local ok, ls = pcall(getMapLabels, aid)
+      for lid in pairs(ok and type(ls) == "table" and ls or {}) do pcall(deleteMapLabel, aid, lid) end
+    end
+    for _, row in ipairs(elro.OFF_LABEL) do
+      -- scaling WITH the map (noScaling false), or a centred row drifts as you zoom
+      pcall(createMapLabel, aid, row[1], -#row[1] * 0.115, row[2], 0,
+            200, 200, 200, 0, 0, 0, 30, 12, true, false)
+    end
+    setRoomUserData(id, "lblv", elro.OFF_LABEL_V)
+  end
+  return id
+end
+
+-- The room the VIEW follows: the placeholder while off the map, else the player's.
+function elro.view_room()
+  if elro.offmap then return elro.off_room() end
+  return elro.current
+end
+
 -- Follow the player. updateMap() then centerview(); on a real canvas change re-assert once
 -- from a tempTimer(0). A relayout passes `always` and must.
 function elro.recenter(always)
-  local id = elro.current
+  local id = elro.view_room()
   if not id or not roomExists(id) then return end
   centerview(id)
   local aid = getRoomArea(id)
@@ -1755,7 +2010,7 @@ function elro.view_unstick(cur, aid)
 end
 
 function elro.view_assert(why)
-  local cur = elro.current
+  local cur = elro.view_room()
   if not (cur and roomExists(cur)) then return end
   -- Tell Mudlet where the player is, FIRST: the widget keeps its own player-room
   -- notion and centerview alone does not necessarily move it. Guarded (not in
@@ -1875,6 +2130,7 @@ function elro.recompute_areas()
   if not elro.areamin_loaded then elro.load_areamin() end
   if not elro.vertpack_loaded then elro.load_vertpack() end
   if not elro.stubshow_loaded then elro.load_stubshow() end
+  if not elro.mapecho_loaded then elro.load_mapecho() end
   if not elro.stubhalo_loaded then elro.load_stubhalo() end
   -- localised: both are read once per room (and `delta` once per EDGE) over the
   -- whole map, and Mudlet runs stock Lua 5.1 with no JIT to hoist the lookups
@@ -1914,7 +2170,11 @@ function elro.recompute_areas()
     local eff
     if adopt and adopt ~= "" then eff = adopt ; forced[eff] = true
     elseif fold and fold ~= "" then eff = fold ; forced[eff] = true
-    else eff = elro.resolve_area(sa) ; if eff ~= sa then forced[eff] = true end end
+    else
+      eff = elro.resolve_area(sa, rec.mh)
+      if eff ~= sa then forced[eff] = true
+      elseif elro.hint_pinned(sa) then forced[sa] = true end   -- an unmerge keeps its tab
+    end
     sarea[id] = eff
     if rec.via == elro.VIA_NONE then exempt[eff] = true end
     groups[eff] = groups[eff] or {}
@@ -2161,19 +2421,24 @@ local function relayout_done(st)
     -- player pin a core indefinitely.
     local spin  = ((st.clean or 0) > 0) and 0 or ((st.spin or 0) + 1)
     if want and spin < 3 then
-      cecho(string.format("\n<yellow>[elro]: relayout %.1fs, %d map(s) committed; %s -- rebuilding.\n<reset>",
-            secs, st.n,
-            (#st.stale > 0)
-              and (#st.stale .. " had mixed input ("
-                   .. (elro.bgDropMixed and "not drawn" or "drawn anyway") .. ")")
-              or "you explored while it ran"))
+      if not st.quiet then
+        cecho(string.format("\n<yellow>[elro]: relayout %.1fs, %d map(s) committed; %s -- rebuilding.\n<reset>",
+              secs, st.n,
+              (#st.stale > 0)
+                and (#st.stale .. " had mixed input ("
+                     .. (elro.bgDropMixed and "not drawn" or "drawn anyway") .. ")")
+                or "you explored while it ran"))
+      end
       elro.flush_dirty(spin)
     elseif want then
-      cecho(string.format("\n<yellow>[elro]: relayout %.1fs; %d run(s) in a row could not"
-            .. " settle (you kept exploring) -- stopping. The map is drawn but may be a"
-            .. " little stale; `maprelayout` or your next pause redoes it.\n<reset>",
-            secs, spin))
+      if not st.quiet then
+        cecho(string.format("\n<yellow>[elro]: relayout %.1fs; %d run(s) in a row could not"
+              .. " settle (you kept exploring) -- stopping. The map is drawn but may be a"
+              .. " little stale; `maprelayout` or your next pause redoes it.\n<reset>",
+              secs, spin))
+      end
     elseif not st.quiet then
+      -- reached only under `mapecho on` (relayout() sets quiet otherwise)
       cecho(string.format("\n<green>[elro]: relayout done -- %d map(s) in %.1fs.\n  %s\n<reset>",
             st.n, secs, elro.bg_profile(bg)))
     end
@@ -2186,6 +2451,11 @@ end
 -- Common prologue + dispatch for both flush entry points. Returns the number of
 -- maps relaid, or -1 when the work was handed to the background coroutine.
 local function relayout(all, quiet, spin)
+  -- A relayout reports ONLY under `mapecho on`, whoever or whatever started it.
+  -- The reports are the solver's own; a command that causes a relayout answers
+  -- for itself ("the hint for 'harbour' is followed again"), and that is enough.
+  if not elro.mapecho_loaded then elro.load_mapecho() end
+  if not elro.mapEcho then quiet = true end
   if type(elro.step_teardown) == "function" then elro.step_teardown() end
   -- A foreground run that errored mid-area may have left the write context armed.
   elro._writeArea, elro._writeCleared, elro._writeCo, elro._bgGuard = nil, nil, nil, nil
@@ -2790,7 +3060,7 @@ elro.terrainHaloIn  = elro.terrainHaloIn  or 255    -- centre alpha (== rim: fla
 -- reused (it is stored in the map file; renumbering repaints old rooms in the
 -- wrong colour). group: the secondary dot is only drawn for a different group.
 -- Ladder: aid > travel > sacred > way > water body > landform > built >
--- surface underfoot > water touching the room > indoors/outdoors.
+-- surface underfoot > water touching the room > maze > indoors/outdoors.
 elro.terrain = {
   -- not terrain, but the most useful marks on a map: where you can heal, and
   -- where a shop will BUY the loot you are carrying
@@ -2842,9 +3112,12 @@ elro.terrain = {
   -- water touching the room rather than filling it; same group as the bodies
   water         = { rank = 35, env = 931, group = "water",  col = {  70, 140, 210 } },
   waterside     = { rank = 36, env = 932, group = "water",  col = { 100, 170, 215 } },
+  -- A server-folded maze, which arrives as `terr=maze` alone; the violet is
+  -- elro.classColours.maze. Rank only has to clear the fallbacks.
+  maze          = { rank = 37, env = 939, group = "maze",   col = { 150,  40, 200 } },
   -- fallbacks, never a secondary; outdoors is the most common colour on the map
-  indoors       = { rank = 37, env = 933, group = "fallback", col = { 245, 165,  85 } },
-  outdoors      = { rank = 38, env = 934, group = "fallback", col = { 105, 115, 100 } },
+  indoors       = { rank = 38, env = 933, group = "fallback", col = { 245, 165,  85 } },
+  outdoors      = { rank = 39, env = 934, group = "fallback", col = { 105, 115, 100 } },
 }
 
 -- Sentinel for "reported, no terrain": getRoomUserData returns "" for both
@@ -2873,12 +3146,25 @@ function elro.terrain_dot_only(csv)
   return false
 end
 
+-- Is this `terr` csv a folded maze?
+function elro.is_maze_terr(csv)
+  if not csv or csv == "" then return false end
+  for name in string.gmatch(csv, "[^,]+") do
+    if (elro.terrainAlias[name] or name) == "maze" then return true end
+  end
+  return false
+end
+
 -- The character a room should show: none at all where a terrain wants the dot,
 -- else the letter its non-compass exits give it. `csv` and `names` may be passed
 -- by a caller that already has them, to save the userdata read / the exit walk.
 function elro.glyph_char(id, csv, names)
   if not elro.glyphs then return "" end
-  if elro.terrain_dot_only(csv == nil and getRoomUserData(id, "terr") or csv) then return "" end
+  if csv == nil then csv = getRoomUserData(id, "terr") end
+  -- A folded maze always shows "?": it arrives with no exits, so glyph_for
+  -- has nothing to derive a letter from.
+  if elro.is_maze_terr(csv) then return "?" end
+  if elro.terrain_dot_only(csv) then return "" end
   return elro.glyph_for(names or elro.room_nonstd(id))
 end
 
@@ -2970,6 +3256,9 @@ end
 -- has it (onRoom) to save the userdata read.
 function elro.terrain_paint(id, csv)
   if not roomExists(id) then return end
+  -- A fresh install misses both boot paths (sysLoadEvent has fired, the map is
+  -- empty), so the first painted room registers the palette.
+  if not elro._envInit then elro._envInit = true ; elro.terrain_env_init() end
   if csv == nil then csv = getRoomUserData(id, "terr") end
   local cell = elro.terrain_roles(csv)
   if type(setRoomEnv) == "function" then
@@ -2984,7 +3273,11 @@ function elro.terrain_paint(id, csv)
   -- character here, which is what lets highlight_paint draw one.
   if type(getRoomChar) == "function" then
     local ch = getRoomChar(id)
-    if ch and ch ~= "" then
+    -- The maze "?" is the one glyph this function CREATES rather than
+    -- re-tints: note_nonstd never runs for a maze node.
+    if elro.is_maze_terr(csv) then
+      elro.glyph_paint(id, elro.glyphs and "?" or "")
+    elseif ch and ch ~= "" then
       elro.glyph_paint(id, elro.terrain_dot_only(csv) and "" or ch)
     end
   end
@@ -3256,6 +3549,32 @@ function elro.stub_set(id)
   return out
 end
 
+-- ---- mapecho: do automatic redraws report? ---------------------------------
+-- Persisted like stubsShown, and absent from elro.KNOBS for the same reason.
+-- Default OFF: the reports are a developer's view of the solver, and a tester's
+-- first complaint was that they scroll the game away.
+function elro.load_mapecho()
+  elro.mapecho_loaded = true
+  if type(getMapUserData) ~= "function" then return end
+  local ok, s = pcall(getMapUserData, "elro.mapEcho")
+  if ok and type(s) == "string" and s ~= "" then elro.mapEcho = (s == "on") end
+end
+
+function elro.cmd_mapecho(arg)
+  arg = string.lower((string.gsub(arg or "", "^%s*(.-)%s*$", "%1")))
+  if arg == "on" or arg == "off" then
+    elro.mapEcho = (arg == "on")
+    if type(setMapUserData) == "function" then
+      pcall(setMapUserData, "elro.mapEcho", arg)
+    end
+  elseif arg ~= "" then
+    cecho("\n<yellow>[elro]: usage: mapecho [on|off]\n<reset>") ; return
+  end
+  cecho(string.format("\n<green>[elro]: relayouts %s.<reset>\n" ..
+    "<cyan>  That goes for every relayout, the ones a command of yours starts too.\n<reset>",
+    elro.mapEcho and "REPORT when they finish" or "are SILENT"))
+end
+
 -- ---- the persisted preference (global, like vertPack) ----------------------
 -- Absent from elro.KNOBS on purpose: reset_knobs would forget a saved preference.
 -- Default lives at the read site, so "never set" means ON.
@@ -3321,6 +3640,145 @@ function elro.stub_backfill(id)
   return true
 end
 
+-- ---- exits that leave the map ----------------------------------------------
+-- `xoff`: the compass exits the server said lead into a room it will not map
+-- (`!MAP id=0`). Such an exit is not frontier, so it is no stub and does not
+-- count toward the halo; it is drawn as the blue half-line of an area border.
+function elro.off_set(id)
+  local out = {}
+  for d in string.gmatch(getRoomUserData(id, "xoff") or "", "[^,]+") do out[d] = true end
+  return out
+end
+
+function elro.off_store(id, set)
+  local list = {}
+  for d in pairs(set) do list[#list + 1] = d end
+  table.sort(list)
+  setRoomUserData(id, "xoff", table.concat(list, ","))
+end
+
+-- The marker's handler. Only a compass exit can be drawn or stubbed, so nothing
+-- else is recorded.
+function elro.off_record(fromId, dir)
+  -- `why` is read back by mapoff: where this stopped, in words
+  local L = elro._lastOff or {}
+  elro._lastOff = L
+  if not fromId or fromId == 0 or not roomExists(fromId) then
+    L.why = "no known room to record on" return
+  end
+  -- a wire without dir= leaves the label to the fence, as onRoom does
+  if (not dir or dir == "") and elro.fence_take then dir = elro.fence_take(fromId) end
+  local d = elro.norm(dir or "")
+  if not elro.dirNum[d] then L.why = "not a compass exit: [" .. tostring(d) .. "]" return end
+  -- ⛔ A REAL EDGE WINS. An area that was mapped and later closed still sends the
+  -- marker for an exit the map already knows; marking it would throw that away.
+  local linked = false
+  for dn, dest in pairs(getRoomExits(fromId) or {}) do
+    if dest and elro.norm(dn) == d then
+      if dest ~= elro.OFF_ROOM then
+        L.why = "a real edge already leads " .. d .. " to " .. tostring(dest) return
+      end
+      linked = true
+    end
+  end
+  local set = elro.off_set(fromId)
+  if not set[d] then
+    set[d] = true
+    elro.off_store(fromId, set)
+    elro.stub_count_dirty(getRoomArea(fromId))
+  end
+  -- ⭐ THE EXIT IS REAL, its destination is the placeholder. A custom line on a
+  -- direction with no exit does not draw in Mudlet and the stub stays (seen
+  -- live). An exit into the placeholder's area is an ordinary cross-area exit:
+  -- Mudlet drops the stub and draw_area_stubs draws the blue border half-line,
+  -- both by paths that already work. The layout never sees it, since
+  -- area_adjacency drops exits that leave the area.
+  if not linked then
+    local okx = setExit(fromId, elro.off_room(), d)
+    elro.cs_dirty(fromId)
+    L.why = "recorded; setExit returned " .. tostring(okx) .. ", exit now " ..
+            tostring((getRoomExits(fromId) or {})[d])
+  else
+    L.why = "already linked"
+  end
+  -- every time, not only the first: cheap, and it repairs what an earlier
+  -- version (or a relayout) left wrong
+  elro.stub_apply(fromId)
+  elro.stub_halo_update()
+  if elro.draw_area_stubs then elro.draw_area_stubs({ [fromId] = true }) end
+  if type(updateMap) == "function" then pcall(updateMap) end
+end
+
+-- Two independent halves, each under pcall: Mudlet abandons a trigger script at
+-- its first error, and the view change must not take the record down with it
+-- (nor the other way round). Errors are SHOWN, or they would never be found.
+function elro.onOff(fromId, dir)
+  -- dir is the LAST field of the marker, and the capture took the line ending
+  -- with it ("east\n" is no compass exit). Trimmed here as well as in the regex:
+  -- this half reaches a player by mapreload, the XML only by a reinstall.
+  if type(dir) == "string" then dir = dir:gsub("^%s+", ""):gsub("%s+$", "") end
+  -- kept for `mapoff`: what arrived, as it arrived, and what it normalised to
+  elro._lastOff = { from = fromId, dir = dir, norm = dir and elro.norm(dir) or nil,
+                    known = fromId and fromId ~= 0 and roomExists(fromId) or false }
+  local ok, err = pcall(elro.off_record, fromId, dir)
+  if not ok then cecho("\n<red>[elro] off-map record ERROR: " .. tostring(err) .. "\n<reset>") end
+  -- The view leaves the map with the player, whatever the exit was (from=0 is a
+  -- login, a teleport or the dark); onRoom brings it back.
+  elro.offmap = fromId or 0
+  ok, err = pcall(elro.recenter, true)
+  if not ok then cecho("\n<red>[elro] off-map view ERROR: " .. tostring(err) .. "\n<reset>") end
+end
+
+-- mapoff [id]: what is recorded for a room (default: the last mapped one), so a
+-- missing blue line can be told apart from a missing record.
+function elro.cmd_off(arg)
+  local id = tonumber(arg or "") or elro.current
+  if not id or not roomExists(id) then cecho("\n<red>[elro]: no such room.\n<reset>") return end
+  local stubs = {}
+  for n in pairs(elro.stub_set(id)) do stubs[#stubs + 1] = tostring(n) end
+  local lines = {}
+  if type(getCustomLines) == "function" then
+    local ok, t = pcall(getCustomLines, id)
+    for k in pairs(ok and type(t) == "table" and t or {}) do lines[#lines + 1] = tostring(k) end
+  end
+  cecho(string.format(
+    "\n<cyan>[elro] room %d: off-map exits [%s]  advertised [%s]\n" ..
+    "  Mudlet stubs (direction numbers) [%s]  custom lines [%s]  view is %s<reset>\n",
+    id, getRoomUserData(id, "xoff") or "", getRoomUserData(id, "xcomp") or "",
+    table.concat(stubs, ","), table.concat(lines, ","),
+    elro.offmap and "OFF the map" or "on the map"))
+  -- which code is answering: a stale copy of this file is the first suspect when
+  -- a fix "does nothing"
+  cecho("<cyan>  off-map code: build 5 (exit linked to room " .. tostring(elro.OFF_ROOM) .. ")<reset>\n")
+  local l = elro._lastOff
+  if l then
+    cecho(string.format(
+      "<cyan>  last marker: from=%s (room known: %s)  dir=[%s]  read as [%s]\n" ..
+      "  what the record step did: %s<reset>\n",
+      tostring(l.from), tostring(l.known), tostring(l.dir), tostring(l.norm),
+      tostring(l.why or "it did not run")))
+  else
+    cecho("<cyan>  no marker has arrived this session.<reset>\n")
+  end
+end
+
+-- A real arrival through the exit: the area was opened, the mark is wrong now.
+function elro.off_clear(fromId, d)
+  if not fromId or fromId == 0 or not d or not roomExists(fromId) then return end
+  local set = elro.off_set(fromId)
+  if not set[d] then return end
+  set[d] = nil
+  elro.off_store(fromId, set)
+  -- unlink the placeholder, and only the placeholder: a real edge stays
+  for dn, dest in pairs(getRoomExits(fromId) or {}) do
+    if dest == elro.OFF_ROOM and elro.norm(dn) == d then
+      setExit(fromId, -1, d) ; elro.cs_dirty(fromId)
+    end
+  end
+  if type(removeCustomLine) == "function" then pcall(removeCustomLine, fromId, d) end
+  elro.stub_count_dirty(getRoomArea(fromId))
+end
+
 -- Bring one room's stubs into line with what it advertises, what it already has an
 -- edge for, and whether stubs are shown at all. Writes only on a CHANGE: a map
 -- mutation is not free even when it changes nothing, and the old code re-stubbed
@@ -3332,13 +3790,26 @@ function elro.stub_apply(id, advertised)
   -- ⚠ LIVE exits, not elro.cs_room: the snapshot is invalidated at the END of
   -- onRoom, so an edge written by this very move is not in it yet and the room
   -- would shed its now-redundant stub only on a revisit.
-  local have = {}
-  for dn, dest in pairs(getRoomExits(id) or {}) do if dest then have[elro.norm(dn)] = true end end
+  local have, real = {}, {}
+  for dn, dest in pairs(getRoomExits(id) or {}) do
+    if dest then
+      have[elro.norm(dn)] = true
+      if dest ~= elro.OFF_ROOM then real[elro.norm(dn)] = true end
+    end
+  end
   local now = elro.stub_set(id)
   local want = {}
+  -- an off-map mark on a direction that has since gained a REAL edge is stale
+  -- (the area was opened and the edge learned from the far side): drop it
+  local off = elro.off_set(id)
+  for d in pairs(off) do
+    if real[d] then elro.off_clear(id, d) ; off[d] = nil end
+  end
   if show then
     for d in pairs(advertised) do
-      if not have[d] then local n = elro.dirNum[d] ; if n then want[n] = true end end
+      if not have[d] and not off[d] then
+        local n = elro.dirNum[d] ; if n then want[n] = true end
+      end
     end
   end
   for n in pairs(want) do if not now[n] then pcall(setExitStub, id, n, true) end end
@@ -3444,7 +3915,8 @@ function elro.stub_area_count(aid)
     if roomExists(r) then
       local adv = elro.stub_advertised(r)
       local ex = elro.cs_exits(r)
-      for d in pairs(adv) do if not ex[d] then n = n + 1 end end
+      local off = elro.off_set(r)
+      for d in pairs(adv) do if not ex[d] and not off[d] then n = n + 1 end end
     end
   end
   elro._stubCount[aid] = { n = n, rooms = #rooms }
@@ -3633,8 +4105,97 @@ function elro.cmd_profile(arg)
     "  view (centerview). 'mapprofile off' to stop.\n<reset>", elro.profMin))
 end
 
-function elro.onRoom(id, fromId, dir, name, area, exits, terr)
+-- The handshake is owed again whenever the link on the other end can be a new
+-- one: this code was (re)loaded, or the connection dropped or came up. The link
+-- forgets the client with every login, and sends the off-map markers only to a
+-- version it has heard from, so an ack per Mudlet SESSION lost them at a relog.
+elro._ackSent = nil
+if type(registerAnonymousEventHandler) == "function" then
+  for _, ev in ipairs({ "sysConnectionEvent", "sysDisconnectionEvent" }) do
+    local key = "_ackH_" .. ev
+    if elro[key] and type(killAnonymousEventHandler) == "function" then
+      pcall(killAnonymousEventHandler, elro[key])
+    end
+    elro[key] = registerAnonymousEventHandler(ev, function() elro._ackSent = nil end)
+  end
+end
+
+-- mapupdate [file]: replace this package with the newest release, in one command.
+-- Mudlet refuses to install over an installed package, so the manual route is
+-- "remove it in the Package Manager, then install", which nobody should have to
+-- do. ⭐ DOWNLOAD FIRST, swap after: if the download fails nothing was removed.
+-- The swap runs from a timer, not from the alias: the alias belongs to the
+-- package being uninstalled. Functions and timers live in the Lua state, which
+-- an uninstall does not clear, so they survive to do the install.
+-- With a local file as argument the download is skipped (testing a build).
+elro.UPDATE_URL = "https://github.com/tobfon/nannymud-mapper/releases/latest/download/ElrohirMapper.mpackage"
+
+function elro.update_swap(path)
+  tempTimer(0.1, function()
+    cecho("\n<cyan>[elro]: removing the old package...\n<reset>")
+    pcall(uninstallPackage, "ElrohirMapper")
+    tempTimer(1, function()
+      local ok, err = pcall(installPackage, path)
+      if ok then
+        cecho("\n<green>[elro]: installed. Your map is untouched; 'maphelp' shows the new version.\n<reset>")
+      else
+        cecho("\n<red>[elro]: the install failed: " .. tostring(err) ..
+              "\n  Drag " .. path .. " onto Mudlet to finish by hand.\n<reset>")
+      end
+    end)
+  end)
+end
+
+function elro.cmd_update(arg)
+  arg = (arg or ""):gsub("^%s+", ""):gsub("%s+$", "")
+  if type(installPackage) ~= "function" or type(uninstallPackage) ~= "function" then
+    cecho("\n<red>[elro]: this Mudlet cannot install packages from a script.\n<reset>") return
+  end
+  if arg ~= "" then                       -- a local build: no download
+    local f = io.open(arg, "rb")
+    if not f then cecho("\n<red>[elro]: no such file: " .. arg .. "\n<reset>") return end
+    f:close()
+    elro.update_swap(arg) ; return
+  end
+  if type(downloadFile) ~= "function" then
+    cecho("\n<red>[elro]: this Mudlet cannot download; see 'maplink setup'.\n<reset>") return
+  end
+  local dir = getMudletHomeDir() .. "/elro_update"
+  if lfs and lfs.mkdir then pcall(lfs.mkdir, dir) end
+  -- the file name IS the package name to Mudlet, so it keeps its own
+  local path = dir .. "/ElrohirMapper.mpackage"
+  os.remove(path)
+  for _, k in ipairs({ "_updDone", "_updErr" }) do
+    if elro[k] then pcall(killAnonymousEventHandler, elro[k]) ; elro[k] = nil end
+  end
+  elro._updDone = registerAnonymousEventHandler("sysDownloadDone", function(_, file)
+    if file ~= path then return end
+    pcall(killAnonymousEventHandler, elro._updDone) ; elro._updDone = nil
+    elro.update_swap(path)
+  end)
+  elro._updErr = registerAnonymousEventHandler("sysDownloadError", function(_, why, file)
+    if file and file ~= path then return end
+    pcall(killAnonymousEventHandler, elro._updErr) ; elro._updErr = nil
+    cecho("\n<red>[elro]: the download failed (" .. tostring(why) ..
+          "). Nothing was changed.\n<reset>")
+  end)
+  cecho("\n<cyan>[elro]: downloading the newest package...\n<reset>")
+  downloadFile(path, elro.UPDATE_URL)
+end
+
+-- mapack: say hello to the link again, now. For a link re-cloned in mid-session,
+-- which nothing on this side can notice.
+function elro.cmd_ack()
+  if type(send) ~= "function" then return end
+  elro._ackSent = true
+  pcall(send, "maplink ack " .. tostring(elro.VERSION), false)
+  pcall(send, "maplink seq auto", false)
+  cecho("\n<green>[elro]: told the link this is client " .. tostring(elro.VERSION) .. ".\n<reset>")
+end
+
+function elro.onRoom(id, fromId, dir, name, area, exits, terr, mha, mh)
   if not id then return end
+  elro.offmap = nil            -- any mapped room ends an excursion off the map
   local _pfTotal
   if elro.profOn then elro._prof = {} ; _pfTotal = pf("total") end
   -- Handshake, once per session. The link streams whether or not anything is
@@ -3644,8 +4205,17 @@ function elro.onRoom(id, fromId, dir, name, area, exits, terr)
   if not elro._ackSent and type(send) == "function" then
     elro._ackSent = true
     pcall(send, "maplink ack " .. tostring(elro.VERSION), false)
+    -- and ask for the command fence; an older link prints its usage line once
+    pcall(send, "maplink seq auto", false)
   end
-  dir = elro.norm(dir or "none")
+  if dir == nil or dir == "" then dir = "none" end
+  -- A wire without dir= (the admins' call) leaves the label to the fence: the
+  -- command the link captured for this move, if it vouches for it.
+  if dir == "none" and fromId and fromId ~= 0 then
+    local fcmd = elro.fence_take(fromId)
+    if fcmd then dir = fcmd end
+  end
+  dir = elro.norm(dir)
   -- An old trigger regex (`exits=(.*)$`) leaks later fields into `exits`. A real
   -- exit list never contains '|', so split there.
   if exits then
@@ -3670,7 +4240,8 @@ function elro.onRoom(id, fromId, dir, name, area, exits, terr)
     setRoomArea(fromId, aid)
     setRoomName(fromId, "room " .. fromId)
     setRoomUserData(fromId, "sarea", (area ~= nil and area ~= "") and area or "world")
-    changed = true ; touched[fromId] = true ; elro.cs_lists_dirty()
+    changed = true ; touched[fromId] = true
+    elro.cs_dirty(fromId) ; elro.cs_lists_dirty()   -- same staleness as the destination
     -- an unplaced room is a collision: it sits wherever addRoom put it
     collided = true
     fromUnplaced = true
@@ -3678,11 +4249,36 @@ function elro.onRoom(id, fromId, dir, name, area, exits, terr)
 
   -- 2. add / enrich the DESTINATION room
   local isNew = not roomExists(id)
-  if isNew then addRoom(id) ; changed = true ; touched[id] = true ; elro.cs_lists_dirty() end
+  -- cs_dirty, not just `touched`: touched is drained at the END of the call,
+  -- and cs_room(id) is read a few lines down.
+  if isNew then
+    addRoom(id) ; changed = true ; touched[id] = true
+    elro.smap_restore(id)          -- recorded exits survive a GUI delete; the room did not
+    elro.cs_dirty(id) ; elro.cs_lists_dirty()
+  end
   setRoomName(id, elro.strip_ansi((name ~= nil and name ~= "") and name or ("room " .. id)))
   local rec = elro.cs_room(id)                 -- nil only if the room vanished under us
   local sa = (area ~= nil and area ~= "") and area or "world"
   if not rec or rec.sarea ~= sa then setRoomUserData(id, "sarea", sa) ; touched[id] = true end
+  -- Merge hints: STORED, never applied (see resolve_area). The server is the
+  -- authority on what it suggests, so a missing field clears the stored one. An
+  -- area-wide hint changing moves every known room of that area, which the
+  -- relayout's recompute_areas does; `changed` is what asks for it.
+  if not elro.hints_loaded then elro.load_hints() end
+  local function tidy(s)
+    if type(s) ~= "string" then return nil end
+    s = s:gsub("^%s+", ""):gsub("%s+$", "")
+    return s ~= "" and s or nil
+  end
+  mha, mh = tidy(mha), tidy(mh)
+  if elro.hintArea[sa] ~= mha then
+    elro.hintArea[sa] = mha ; elro.save_hints() ; changed = true
+  end
+  if mha then mh = nil end                    -- the wider hint is the one in force
+  if ((rec and rec.mh) or "") ~= (mh or "") then
+    setRoomUserData(id, "mh", mh or "") ; touched[id] = true ; changed = true
+    if rec then rec.mh = mh or "" end
+  end
   -- sticky folds: keep an existing fold tag; a NEW room inherits its source
   -- room's fold so an explored branch keeps growing into its submap instead of
   -- leaking back into the server area. Assign the EFFECTIVE area (fold first,
@@ -3713,11 +4309,11 @@ function elro.onRoom(id, fromId, dir, name, area, exits, terr)
   -- so re-entering a stolen room doesn't snap it back to its source area.
   local adopt = rec and rec.adopt
   local effName = (adopt and adopt ~= "") and adopt
-    or ((fold and fold ~= "") and fold or elro.resolve_area(sa))
-  -- The area_min gate, applied only to the plain case (adopt/fold/merge are
-  -- forced-keep in recompute_areas). Must match recompute_areas exactly or the
-  -- room flips tabs on every entry.
-  if effName == sa and not elro.area_kept(sa) then
+    or ((fold and fold ~= "") and fold or elro.resolve_area(sa, mh))
+  -- The area_min gate, applied only to the plain case (adopt/fold/merge/hint
+  -- and an unmerged area are forced-keep in recompute_areas). Must match
+  -- recompute_areas exactly or the room flips tabs on every entry.
+  if effName == sa and not elro.area_kept(sa) and not elro.hint_pinned(sa) then
     if via ~= "" and via ~= elro.VIA_NONE and elro.area_kept(via) then
       effName = via                          -- absorbed by the area we came in from
     elseif via ~= elro.VIA_NONE then
@@ -3734,6 +4330,10 @@ function elro.onRoom(id, fromId, dir, name, area, exits, terr)
   -- ...and the non-compass ones as a room glyph (cosmetic: no touched/changed)
   elro.note_nonstd(id, exits)
 
+  -- A real arrival through an exit marked off-map (its area was opened): unlink
+  -- the placeholder FIRST, or the edge write below reads it as a destination
+  -- that changed and counts a maze mutation.
+  elro.off_clear(fromId, dir)
   -- 3. edge SOURCE -> DEST (both ways for compass; special exit otherwise)
   if fromId and fromId ~= 0 and dir ~= "none" and roomExists(fromId) then
     if elro.dirNum[dir] then
@@ -3749,7 +4349,9 @@ function elro.onRoom(id, fromId, dir, name, area, exits, terr)
       if manual and manual ~= "" and old and old ~= id then
         -- a locked exit (mapexitlock) is never re-pointed; the mutation was still counted
       else
-        local had = old == id
+        -- A room created in THIS call cannot already be something's exit
+        -- target, so isNew overrules a snapshot that says it is.
+        local had = old == id and not isNew
         if not had then setExit(fromId, id, dir) ; touched[fromId] = true end
         if assumedF then
           setRoomUserData(fromId, "assumed_" .. dir, "") -- forward is now OBSERVED
@@ -3803,12 +4405,21 @@ function elro.onRoom(id, fromId, dir, name, area, exits, terr)
         end
       end
     else
-      -- auto special exit from the (unreliable) hook dir, but NEVER clobber a
-      -- manually recorded edge (maprecordmove) -- that is the trusted command.
+      -- A non-compass dir is a command the link captured as typed ("climb
+      -- mountain"): the server sends nothing else here any more, so it is the
+      -- replayable one. It never clobbers a manually recorded edge
+      -- (maprecordmove): that is the trusted command, and first-writer wins.
       if elro.smap == nil then elro.load_smap() end
       local recording = elro.rec and elro.rec.from == fromId
-      if not recording and not elro.smap[fromId .. ":" .. id] then
-        addSpecialExit(fromId, id, dir)
+      local key = fromId .. ":" .. id
+      if not recording then
+        if not elro.smap[key] then
+          elro.record_edge(fromId, id, { dir })
+        elseif not elro.has_special(fromId, id) then
+          -- our record survived, Mudlet's copy did not (a rebuilt room, an
+          -- older map): put it back quietly, it is the same edge
+          pcall(addSpecialExit, fromId, id, elro.smap[key])
+        end
       end
       -- a new room behind a special exit has no guess: treat as a collision
       if isNew then collided = true end
@@ -3910,6 +4521,63 @@ function elro.onRoom(id, fromId, dir, name, area, exits, terr)
   end
 end
 
+-- ---- the command fence (!MAPSEQ) -------------------------------------------
+-- The link prints "!MAPSEQ <n> <command>" before every parsed command, so a
+-- !MAP line that arrives before the next fence was produced by that command.
+-- The fence remembers the room the client was in when it arrived; a !MAP whose
+-- `from` is a different room was not this command's doing (something moved us
+-- without a !MAP line, or the fence is stale). A fence older than fenceWindow
+-- ms is not trusted either: a follow or a vehicle can move us long after the
+-- last thing we typed. Each fence labels at most one move.
+if elro.fenceShow == nil then elro.fenceShow = false end     -- keep the lines visible
+if elro.fenceWindow == nil then elro.fenceWindow = 4000 end  -- ms
+
+function elro.onSeq(n, cmd)
+  cmd = (cmd or ""):gsub("^%s+", ""):gsub("%s+$", "")
+  elro.fence = { n = n, cmd = cmd, from = elro.current, at = elro.now_ms() }
+end
+
+-- Mudlet's special exits of a room as a list of { to=, cmd= }. The table has
+-- three shapes across builds ({cmd->id}, {id->cmd}, {id->{cmd->..}}) and the id
+-- half may be a string, so the id is whichever half is a number that names a
+-- room. ⛔ Iterating getSpecialExits by an assumed shape throws, and an alias
+-- that throws dies silently.
+function elro.special_list(id)
+  local out = {}
+  if type(getSpecialExits) ~= "function" then return out end
+  local got, t = pcall(getSpecialExits, id)
+  if not got or type(t) ~= "table" then return out end
+  local function pair(a, b)
+    local n = tonumber(a)
+    if n and roomExists(n) then out[#out + 1] = { to = n, cmd = tostring(b) } ; return end
+    n = tonumber(b)
+    if n and roomExists(n) then out[#out + 1] = { to = n, cmd = tostring(a) } end
+  end
+  for k, v in pairs(t) do
+    if type(v) == "table" then
+      for k2 in pairs(v) do pair(k, k2) end
+    else
+      pair(k, v)
+    end
+  end
+  return out
+end
+
+function elro.has_special(from, to)
+  for _, e in ipairs(elro.special_list(from)) do if e.to == to then return true end end
+  return false
+end
+
+-- The typed command behind a move fromId -> here, or nil. Consumes the fence.
+function elro.fence_take(fromId)
+  local f = elro.fence
+  if not f or f.used then return nil end
+  f.used = true
+  if f.cmd == "" or f.from ~= fromId then return nil end
+  if elro.now_ms() - f.at > elro.fenceWindow then return nil end
+  return f.cmd
+end
+
 -- ---- manual edge recording (maprecordmove) --------------------------------
 -- maprecordmove captures the exact command(s) for an exit the hook dir cannot
 -- replay and stores them on the from->to edge in elro.smap (source of truth),
@@ -3966,6 +4634,25 @@ function elro.record_edge(from, to, cmds)
   else
     cecho("\n<green>[elro]: recorded edge " .. from .. "->" .. to ..
           " = " .. shown .. "\n<reset>")
+  end
+end
+
+-- A room created anew (a GUI delete, then re-explored under the same permanent
+-- id) has lost Mudlet's special exits but not our record of them, so the glyph
+-- showed an exit the map could not route. Put back every recorded edge that
+-- touches the room and whose other end exists. mapdelroom clears the record
+-- instead, so an explicit delete stays deleted.
+function elro.smap_restore(id)
+  if elro.smap == nil then elro.load_smap() end
+  if type(addSpecialExit) ~= "function" then return end
+  for k, v in pairs(elro.smap or {}) do
+    local a, b = string.match(k, "^(%d+):(%d+)$")
+    a, b = tonumber(a), tonumber(b)
+    if a and b and (a == id or b == id) and roomExists(a) and roomExists(b)
+       and not elro.has_special(a, b) then
+      pcall(addSpecialExit, a, b, v)
+      if a ~= id then elro.glyph_room(a) end
+    end
   end
 end
 
@@ -4053,6 +4740,59 @@ end
 
 -- ---- database manipulation commands ----------------------------------------
 
+-- Delete every selected room through the mapper, so the command store is
+-- cleared too. Mudlet's own Delete in the mapper menu leaves it behind (see
+-- smap_restore); this is the same action offered beside it, and as
+-- "mapdelroom sel".
+function elro.delete_selection()
+  local ids = elro.sel_rooms()
+  if not ids then return end
+  for _, id in ipairs(ids) do
+    if roomExists(id) then elro.delete_room(id) end
+  end
+  cecho(string.format("\n<green>[elro]: deleted %d selected room(s) through the mapper.\n<reset>", #ids))
+end
+
+-- The mapper's right-click menu entry for it. Mudlet's built-in entries cannot
+-- be removed, so ours sits beside them. Re-registered on every load: the
+-- handler is anonymous and would otherwise stack.
+if type(addMapEvent) == "function" and type(registerAnonymousEventHandler) == "function" then
+  pcall(addMapEvent, "elro_delete_selection", "elroMapDeleteSelection", "",
+        "Delete rooms (mapper)")
+  if elro._mapDelHandler then pcall(killAnonymousEventHandler, elro._mapDelHandler) end
+  elro._mapDelHandler = registerAnonymousEventHandler("elroMapDeleteSelection",
+    function() elro.delete_selection() end)
+end
+
+-- Double-click on a room: Mudlet runs getPath from the player's room to it,
+-- leaves the result in the speedWalkDir/speedWalkPath globals, and calls this
+-- global. Walking through walk_steps replays recorded commands ("crawl hole")
+-- where a bare direction would fail.
+function doSpeedWalk()
+  if not elro.current or not roomExists(elro.current) then
+    cecho("\n<red>[elro]: current room unknown; move once first.\n<reset>") return
+  end
+  if type(speedWalkDir) ~= "table" or #speedWalkDir == 0 then
+    cecho("\n<yellow>[elro]: no path to that room.\n<reset>") return
+  end
+  cecho(string.format("\n<cyan>[elro]: walking %d step(s).\n<reset>", #speedWalkDir))
+  elro.walk_steps(speedWalkDir, speedWalkPath)
+end
+
+-- The same from the right-click menu: walk to the one selected room.
+if type(addMapEvent) == "function" and type(registerAnonymousEventHandler) == "function" then
+  pcall(addMapEvent, "elro_walk_to", "elroMapWalkTo", "", "Walk here (mapper)")
+  if elro._mapWalkHandler then pcall(killAnonymousEventHandler, elro._mapWalkHandler) end
+  elro._mapWalkHandler = registerAnonymousEventHandler("elroMapWalkTo", function()
+    local ids = elro.sel_rooms()
+    if not ids then return end
+    if #ids ~= 1 then
+      cecho("\n<yellow>[elro]: select exactly one room to walk to.\n<reset>") return
+    end
+    elro.gotoRoom(ids[1])
+  end)
+end
+
 -- list outgoing and incoming edges for a room (default: current room)
 function elro.list_edges(id)
   id = id or elro.current
@@ -4071,11 +4811,9 @@ function elro.list_edges(id)
     cecho(string.format("    %s -> %d (%s)\n", dir, dest, getRoomName(dest) or "?"))
     any = true
   end
-  if type(getSpecialExits) == "function" then
-    for cmd, dest in pairs(getSpecialExits(id) or {}) do
-      cecho(string.format("    [special '%s'] -> %d (%s)\n", cmd, dest, getRoomName(dest) or "?"))
-      any = true
-    end
+  for _, e in ipairs(elro.special_list(id)) do
+    cecho(string.format("    [special '%s'] -> %d (%s)\n", e.cmd, e.to, getRoomName(e.to) or "?"))
+    any = true
   end
   if not any then cecho("    (none)\n") end
 
@@ -4088,12 +4826,10 @@ function elro.list_edges(id)
         any = true
       end
     end
-    if type(getSpecialExits) == "function" then
-      for cmd, dest in pairs(getSpecialExits(rid) or {}) do
-        if dest == id then
-          cecho(string.format("    %d (%s) via [special '%s']\n", rid, getRoomName(rid) or "?", cmd))
-          any = true
-        end
+    for _, e in ipairs(elro.special_list(rid)) do
+      if e.to == id then
+        cecho(string.format("    %d (%s) via [special '%s']\n", rid, getRoomName(rid) or "?", e.cmd))
+        any = true
       end
     end
   end
@@ -4116,12 +4852,12 @@ function elro.delete_edge(from, to)
       cecho(string.format("\n<green>[elro]: removed %d -[%s]-> %d<reset>\n", from, dir, to))
     end
   end
-  if type(getSpecialExits) == "function" and type(removeSpecialExit) == "function" then
-    for cmd, dest in pairs(getSpecialExits(from) or {}) do
-      if dest == to then
-        removeSpecialExit(from, to)
+  if type(removeSpecialExit) == "function" then
+    for _, e in ipairs(elro.special_list(from)) do
+      if e.to == to then
+        pcall(removeSpecialExit, from, to)
         removed = removed + 1
-        cecho(string.format("\n<green>[elro]: removed %d -[special '%s']-> %d<reset>\n", from, cmd, to))
+        cecho(string.format("\n<green>[elro]: removed %d -[special '%s']-> %d<reset>\n", from, e.cmd, to))
       end
     end
   end
@@ -4164,10 +4900,10 @@ function elro.delete_room(id)
           if ra then dirty[ra] = true end
         end
       end
-      if type(getSpecialExits) == "function" and type(removeSpecialExit) == "function" then
-        for cmd, dest in pairs(getSpecialExits(rid) or {}) do
-          if dest == id then
-            removeSpecialExit(rid, id)
+      if type(removeSpecialExit) == "function" then
+        for _, e in ipairs(elro.special_list(rid)) do
+          if e.to == id then
+            pcall(removeSpecialExit, rid, id)
             local ra = getRoomArea(rid)
             if ra then dirty[ra] = true end
           end
@@ -4205,6 +4941,8 @@ end
 local HELP_BASIC = {
   { "BASICS" },
   { "maphelp [advanced]", "this list; 'advanced' adds diagnostics and tuning" },
+  { "mapupdate",          "replace this package with the newest release. Downloads first, so a failed download changes nothing; your map is untouched" },
+  { "mapecho [on|off]",   "should a relayout report when it finishes (time, frames, the solver's profile)? Off by default, and then no relayout prints anything" },
   { "mapgoto <id|area>",  "speedwalk to a room id, or the nearest room of a named area (substring ok)" },
   { "mapnear [terrain]",  "walk to the nearest room of a terrain (heal, shop, port...); bare = list the names you can search for" },
   { "mapsearch <pat>",    "search room and area names; lists matching rooms with ids" },
@@ -4217,17 +4955,19 @@ local HELP_BASIC = {
   { "MAP DATA -- changes rooms, exits or areas" },
   { "mapwipe [area] [confirm]", "delete the whole map, or every room the SERVER put in one area; without 'confirm' it only reports what it would delete" },
   { "mapdelroom <id>",    "delete a room and every edge to or from it, then relayout" },
+  { "mapdelroom sel",     "the same for every room selected in the mapper (also in its right-click menu)" },
   { "mapdeledge <f> <t>", "delete all edges from room f to room t (compass + special)" },
   { "maprecordmove [cmd]","record a special or multi-step exit (bare = capture interactively)" },
   { "mapmerge <area>",    "merge that area into the one you are standing in" },
-  { "mapunmerge <area>",  "undo a merge   (mapmerges = list them)" },
+  { "mapunmerge <area>",  "undo a merge, yours or one the game suggested   (mapmerges = list both)" },
+  { "maphints [on|off [area]]", "the game may suggest drawing an area on another map (a town built by several wizards). Follow the suggestions or not, for all areas or one; bare = list them" },
   { "mapfold <dir>",      "fold the branch through that exit into a submap" },
   { "mapunfold <dir>",    "undo a fold   (mapfolds = list them)" },
   { "mapsteal <id,...>",  "steal room(s) into the area you are standing in, in one relayout" },
   { "mapunsteal <id,...>","return stolen room(s) to their own area   (mapsteals = list them)" },
   { "mapmaze [auto [area|.]]","fold untruthful clusters; bare = current room, auto = whole map, auto <area> = one server area" },
   { "mapmaze sel",        "mark every room selected in the viewer as maze, then fold once -- for mirror mazes, which mutate nothing and so are invisible to 'auto'" },
-  { "mapunmaze [id,...]", "release the current room's whole maze submap; with room ids (or 'here') release only those, leaving the rest folded   (mapmazes = list them)" },
+  { "mapunmaze [all|id,...]", "release the current room's whole maze submap; with room ids (or 'here') release only those, leaving the rest folded; 'all' releases every submap and clears the maze override   (mapmazes = list them)" },
   { "mapstubs [on|off|halo N]","what the canvas draws (rooms/edges/stubs/lines). Mudlet redraws every stub every frame, so a big part-explored area is slow: the HALO shows only stubs within N cells of you once an area has a lot. Lossless -- the record is kept" },
   { "mapprofile [on|off|ms]","time the phases of each move (graph / terrain / guess / relayout / view) and print the ones over <ms>; for finding what a slow move is actually doing" },
   { "mapmazelive [area|.|clear]","what the last solve DID with this area's maze doors: which are drawn as spokes, which fell back to a stub, and whether the area was vetoed; 'clear' lifts vetoes" },
@@ -4249,6 +4989,8 @@ local HELP_BASIC = {
 }
 local HELP_ADV = {
   { "DIAGNOSTICS -- read the layout, change nothing" },
+  { "mapoff [id]",        "what is recorded for a room about exits that leave the map: the record, the stubs, the custom lines" },
+  { "mapack",             "tell the game which client this is, again. Needed only if 'maplink' says no client has answered" },
   { "mapaudit [all]",     "exits whose geometry the trustworthy (walked-both-ways) exits refute -- usually mistyped links" },
   { "mapedges [<id>]",    "outgoing and incoming edges for a room (default: current)" },
   { "mapmut [<id>]",      "per-exit mutation counters and lock state (default: current room)" },
@@ -4269,7 +5011,7 @@ local HELP_ADV = {
   { "mapwd <secs|off>",   "walk watchdog: abort a runaway relayout and say where it was, instead of freezing Mudlet (default 60s)" },
   { "mapcs [reset]",      "c-space snapshot stats; reset forces a full re-read of Mudlet room state" },
   { "mapdebug on|off",    "toggle layout step tracing" },
-  { "mapreload",          "re-read lua/modules.lua and every module from disk -- no package reinstall needed" },
+  { "mapreload",          "re-read lua/modules.lua and every module from disk -- no package reinstall needed; also drops the c-space snapshot, since a reload heals stale CODE and that cache is stale DATA (mapcs reset does it alone)" },
   { "mapsrc [path]",      "show or set the directory those modules are loaded from (persistent)" },
 }
 function elro.map_help(arg)
@@ -4359,10 +5101,10 @@ function elro.map_wipe(arg)
           local ra = getRoomArea(rid) ; if ra then dirty[ra] = true end
         end
       end
-      if type(getSpecialExits) == "function" and type(removeSpecialExit) == "function" then
-        for _, dest in pairs(getSpecialExits(rid) or {}) do
-          if scope[dest] then
-            removeSpecialExit(rid, dest)
+      if type(removeSpecialExit) == "function" then
+        for _, e in ipairs(elro.special_list(rid)) do
+          if scope[e.to] then
+            pcall(removeSpecialExit, rid, e.to)
             local ra = getRoomArea(rid) ; if ra then dirty[ra] = true end
           end
         end

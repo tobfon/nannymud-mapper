@@ -195,6 +195,95 @@ elro.onRoom(1, 0, "none", "Hall", "t", "north,south,east,west", "indoors")
 ok(count(1) == 0, "elro.exitStubs = false creates none at all")
 elro.exitStubs = true
 
+print("an exit that leaves the map (!MAP id=0) is not a stub")
+fresh()
+local LINES = {}
+_G.addCustomLine = function(id, pts, d) LINES[id .. ":" .. d] = true end
+_G.removeCustomLine = function(id, d) LINES[id .. ":" .. d] = nil end
+setRoomCoordinates(1, 5, 5, 0)
+elro.onRoom(1, 0, "none", "Hall", "t", "north,south,east,west", "indoors")
+ok(count(1) == 4, "four advertised exits, four stubs to begin with")
+local before = elro.stub_area_count(aid)
+elro.onOff(1, "east")
+ok(count(1) == 3, "the marked exit lost its stub")
+ok(getRoomUserData(1, "xoff") == "east", "...and is recorded on the room")
+ok(elro.stub_area_count(aid) == before - 1, "...and no longer counts toward the halo")
+ok(LINES["1:east"] == true, "...and is drawn as a border half-line")
+ok(getRoomExits(1)["east"] == elro.OFF_ROOM, "...as a real exit into the placeholder room")
+ok(getRoomArea(elro.OFF_ROOM) ~= aid, "...which lives on a canvas of its own")
+elro.onOff(1, "east")
+ok(getRoomUserData(1, "xoff") == "east", "a repeated marker changes nothing")
+elro.onOff(1, "enter hut")
+ok(getRoomUserData(1, "xoff") == "east", "a non-compass exit is not recorded")
+elro.onOff(99, "north")
+ok(not roomExists(99), "a marker from an unknown room creates nothing")
+elro.onRoom(1, 0, "none", "Hall", "t", "north,south,east,west", "indoors")
+ok(count(1) == 3, "arriving again does not bring the stub back")
+-- the area is opened later: a real arrival through the exit clears the mark
+elro.onRoom(2, 1, "east", "Yard", "t", "west", "outdoors")
+ok((getRoomUserData(1, "xoff") or "") == "", "a real move through it clears the mark")
+ok(getRoomExits(1)["east"] == 2, "...and the exit now leads to the real room")
+ok((getRoomUserData(1, "mut_east") or "") == "",
+   "...without being counted as a maze mutation")
+ok(LINES["1:east"] == nil, "...and removes the half-line")
+ok(count(1) == 3, "...and the edge, not a stub, holds the direction now")
+
+print("the direction arrives with the line ending attached (seen live)")
+fresh()
+setRoomCoordinates(1, 5, 5, 0)
+elro.onRoom(1, 0, "none", "Hall", "t", "north,east", "indoors")
+elro.onOff(1, "east\n")
+ok(getRoomUserData(1, "xoff") == "east", "'east\\n' is read as east")
+ok(getRoomExits(1)["east"] == elro.OFF_ROOM, "...and linked to the placeholder")
+elro.onOff(1, " north\r\n")
+ok(getRoomUserData(1, "xoff") == "east,north", "...and so is ' north\\r\\n'")
+
+print("a real edge beats an off-map mark, never the reverse")
+fresh()
+LINES = {}
+setRoomCoordinates(1, 5, 5, 0)
+elro.onRoom(1, 0, "none", "Hall", "t", "north,east", "indoors")
+elro.onRoom(2, 1, "east", "Yard", "t", "west", "outdoors")
+elro.onOff(1, "east")                      -- the area was closed AFTER it was mapped
+ok((getRoomUserData(1, "xoff") or "") == "", "a marker on a known edge records nothing")
+ok(getRoomExits(1)["east"] == 2, "...and the real edge is still there")
+ok(LINES["1:east"] == nil, "...with no border line drawn over it")
+-- the dark: the bare form has no room and no direction, so it cannot mark anything
+elro.onOff(0, nil)
+ok((getRoomUserData(1, "xoff") or "") == "" and (getRoomUserData(2, "xoff") or "") == "",
+   "a blind move marks no exit on any room")
+-- opened later, but the edge is learned from the FAR side (arrival by teleport)
+elro.onOff(1, "north")
+ok(getRoomUserData(1, "xoff") == "north", "north is marked while its area is closed")
+elro.onRoom(3, 0, "none", "Lane", "t", "south", "outdoors")     -- teleported in
+setExit(1, 3, "north")                                           -- the reverse edge, as onRoom writes it
+elro.stub_apply(1)
+ok((getRoomUserData(1, "xoff") or "") == "", "a mark on a direction that gained an edge heals itself")
+ok(LINES["1:north"] == nil, "...and its border line goes with it")
+
+print("off the map, the view leaves the last room")
+fresh()
+local VIEW
+_G.centerview = function(id) VIEW = id end
+setRoomCoordinates(1, 5, 5, 0)
+elro.onRoom(1, 0, "none", "Hall", "t", "north,east", "indoors")
+ok(VIEW == 1, "on the map the view follows the player")
+elro.onOff(1, "east")
+ok(VIEW == elro.OFF_ROOM, "the marker moves the view to the placeholder")
+ok(roomExists(elro.OFF_ROOM) and getRoomArea(elro.OFF_ROOM) ~= aid,
+   "...which is a room in a canvas of its own")
+ok(elro.current == 1, "...while elro.current keeps the last mapped room")
+elro.recenter(true)
+ok(VIEW == elro.OFF_ROOM, "a relayout's recenter does not snap the view back")
+elro.recompute_areas()
+ok(getRoomArea(elro.OFF_ROOM) ~= aid, "recompute_areas leaves the placeholder in its own area")
+elro.onRoom(2, 0, "none", "Yard", "t", "west", "outdoors")
+ok(VIEW == 2 and not elro.offmap, "the next mapped room brings the view back")
+elro.onOff(0, nil)
+ok(VIEW == elro.OFF_ROOM, "the bare login form (from=0) moves the view too")
+ok((getRoomUserData(2, "xoff") or "") == "", "...and records no exit anywhere")
+elro.offmap = nil
+
 print("")
 if fails == 0 then print("PASS  " .. checks .. "/" .. checks .. " checks passed")
 else print("FAIL  " .. fails .. "/" .. checks .. " checks failed") ; os.exit(1) end

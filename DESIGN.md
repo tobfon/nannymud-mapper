@@ -62,6 +62,126 @@ server !MAP line
   -> core.relayout_done     re-run if the graph moved meanwhile (level-triggered, spin-guarded)
 ```
 
+**The captured command.** The link captures every command as the parser ran it
+(asked for by `maplink seq auto` in the handshake) and the server sends it as the
+`!MAP` line's `dir` for the player's own moves and party follows. A non-compass
+`dir` is therefore a replayable command and `onRoom` records it as the edge
+command (the same store `maprecordmove` writes, first-writer wins), which is what
+makes `climb mountain` replayable without recording it by hand. The server never
+sends room prose there any more; a move it cannot name arrives as `dir=none`.
+
+**Recorded exits outlive the rooms.** The command store is map-level, keyed by
+permanent ids, so a GUI delete of rooms leaves it intact while Mudlet's special
+exits die with the rooms; re-exploring then showed a glyph for an exit the map
+could not route (2026-09-05). `onRoom` calls `smap_restore` when it creates a
+room: every recorded edge touching it whose other end exists is put back. An
+explicit `mapdelroom` clears the record, so that stays deleted. Mudlet has no
+reliable event for a GUI delete, which is why this hangs off re-creation. To make
+the explicit form as easy as the GUI one, `mapdelroom sel` deletes the mapper
+selection through `delete_room`, and the same action is added to the mapper's
+right-click menu as "Delete rooms (mapper)" via `addMapEvent`; Mudlet's own
+entry cannot be removed, so it sits beside it.
+
+**Walking from the map.** Double-clicking a room makes Mudlet run `getPath` from
+the player's room and call the global `doSpeedWalk()` with the result in
+`speedWalkDir`/`speedWalkPath`; ours hands those to `walk_steps`, so recorded
+commands replay where a bare direction would fail. "Walk here (mapper)" in the
+right-click menu does the same for a single selected room through `gotoRoom`.
+
+**Server merge hints (`mha=`, `mh=`).** The server may suggest the canvas a room
+is drawn on: `mha` for every room of its server area, `mh` for that room alone.
+⛔ **A hint is data, never an action.** `onRoom` only STORES it (`elro.hintArea`,
+one entry per server area, in map userdata; `mh` in room userdata) and the
+canvas is always computed by `elro.resolve_area(sarea, mh)` from the hint plus
+the player's say. If arrival APPLIED a hint, re-walking a room would undo an
+unmerge, and the client would have to remember unmerged rooms one by one. As it
+is, the player's say is per server area (`elro.hintIgnore`, and the global
+`elro.hintsOff`), so rooms explored after an unmerge follow it and nothing can
+merge them back. Precedence: steal > fold > the player's own merge > server
+hint > server area. `resolve_area` is the ONE definition that `onRoom` and
+`recompute_areas` both call; two that disagree flip a room's tab on every entry.
+An unmerged area is **pinned** to its own tab (`hint_pinned`, forced-keep in
+`recompute_areas`, exempt from the gate in `onRoom`): without the pin `area_min`
+folds a half-explored one straight back into the area it was entered from,
+which looks exactly like the unmerge failing. The server is the authority on
+its own suggestion, so a line without the field clears what was stored.
+`mapmerges` lists both kinds, `mapunmerge <area>` undoes either, `maphints
+[on|off [area]]` is the way back. `analysis/test_hints.lua` walks the scenarios.
+
+**Exits that leave the map.** The server maps only the areas its administrators
+have opened, and a move into anything else used to send nothing, so such an exit
+stayed a stub for ever: indistinguishable from one not yet walked, and counted
+toward `stubHaloMin`, which let a town full of closed doors engage the halo and
+hide its real frontier. The server now sends `!MAP id=0|from=<id>|dir=<dir>` for
+such a move. `onOff` records the direction
+in the room's `xoff` userdata and **links the exit to the placeholder room**
+(`elro.OFF_ROOM`, in the "off the map" area, see below). That makes it an
+ordinary cross-area exit: Mudlet drops the stub because an exit exists,
+`stub_area_count` stops counting it, and `draw_area_stubs` draws the blue border
+half-line, all by paths that already worked. The first cut drew a custom line on
+a direction that had NO exit; in Mudlet that draws nothing and the stub stays
+(seen live, the user's diagnosis). The layout never sees the link, since
+`area_adjacency` drops exits that leave the area. `onRoom` unlinks the
+placeholder BEFORE it writes a real edge through that direction, or the write
+would read as a destination that changed and count a maze mutation. Compass exits only: nothing
+else can be stubbed or drawn. A real arrival through the exit (the area was
+opened) clears the mark in `onRoom`. The player has to try the exit once; an
+untried exit into a closed area is still an honest stub.
+
+**An exit into the DARK stays a stub, on purpose** (decided 2026-09-19, seen
+live). A closed area is finished: there is nothing there for this map to learn,
+so its exit becomes a border. A dark room is not: come back with a light and it
+maps like any other, so the stub's "unexplored" is simply true. It also falls out
+of the protocol rather than needing a rule, since the dark sends the bare marker,
+which names no exit.
+
+Precedence, in one rule: **a real edge always wins.** A marker for a direction
+the room already has an exit in records nothing (an area mapped and later closed
+keeps its edges; the map does not forget what it knows). A mark on a direction
+that later gains an edge is stale and `stub_apply` drops it, which covers an
+opened area whose edge is learned from the far side. The dark needs no rule: a
+blind move sends the bare form, which has no room and no direction, so it can
+neither mark an exit nor be mistaken for one, and the lit room's ordinary line
+writes the real edge later. `onOff` runs its two halves, the record and the view
+change, under separate `pcall`s and prints an error from either: Mudlet abandons
+a trigger script at its first error, and when the record sat behind the view
+change a live test swapped the canvas and left the stubs unmarked, silently.
+`mapoff [id]` prints what a room has recorded, its stubs and its custom lines.
+
+**Off the map, the view leaves too.** The player marker used to stay on the
+last mapped room, which reads as "you are here" and is wrong. Mudlet cannot show
+no player room, so the same marker moves the view to one placeholder room
+(`elro.OFF_ROOM` 899999, below `MAZE_VBASE` and above any real id) in a canvas of
+its own, "off the map", with a label saying so. `adopt` pins it to its own tab
+and `via` = `VIA_NONE` keeps a one-room area from being folded into `world`.
+`elro.view_room()` is what `recenter` and `view_assert` follow, so a background
+relayout finishing while the player is away cannot snap the view back.
+`elro.current` is deliberately NOT cleared: it anchors the stub halo, and nil
+there makes `stub_halo_update` resync every stub on the map at each step off it.
+Any `onRoom` ends the excursion. The server also sends the bare form
+`!MAP id=0|from=0` for a login or teleport into unmapped space, so a session that
+starts there does not show the player where the last one ended.
+
+The markers are NOT gated on the client's version. They briefly were (sent only
+after an ack reporting 1.1.0, to spare 1.0.0 clients a raw line), and that made
+a feature depend on state kept in two places: the link forgets the client at
+every login while the client remembered having said hello for the whole Mudlet
+session, so a relog silently switched the markers off. 1.0.0 had no users, so
+the gate went. The ack itself is still re-sent after a reload or a reconnect,
+and by `mapack`, because the version notice and `maplink`'s status use it.
+
+**The command fence** is the fallback for a wire without `dir=` (an admin
+decision, `WIRE_DIR` in the server daemon): the link then prints `!MAPSEQ <n>
+<command>` before every parsed command. `core.onSeq` keeps only the latest fence,
+with the room the client was in when it arrived, and `onRoom` takes it once per
+arrival when `dir` is missing: it labels the move only if its `from` is that room
+and the fence is younger than `fenceWindow` ms, so a stale fence can never label a
+vehicle. The trigger regex treats `dir=` as optional for this. The wire order is
+fence, room description, `!MAP`; the fence lines are gagged unless `elro.fenceShow`
+is set. The trigger accepts a prompt (`> `) in front of the fence: the prompt has
+no trailing newline, and in a queued speedwalk the local command echo that would
+normally break the line is long gone, so the fence arrives glued to it. The server side and its driver lessons are in `../DESIGN.md`.
+
 ### The c-space snapshot (core)
 
 The solver never reads Mudlet's room database directly. `cs_room` materialises a room's exits,

@@ -27,7 +27,9 @@ elro.onRoom(
   matches[5],
   matches[6],
   matches[7],
-  matches[8])</script>
+  matches[8],
+  matches[9],
+  matches[10])</script>
 				<triggerType>0</triggerType>
 				<conditonLineDelta>0</conditonLineDelta>
 				<mStayOpen>0</mStayOpen>
@@ -39,7 +41,49 @@ elro.onRoom(
 				<colorTriggerFgColor>#000000</colorTriggerFgColor>
 				<colorTriggerBgColor>#000000</colorTriggerBgColor>
 				<regexCodeList>
-					<string>^!MAP id=(\d+)\|from=(\d+)\|dir=([^|]+)\|name=([^|]+)\|area=([^|]+)\|exits=([^|]*)(?:\|terr=(.*))?$</string>
+					<string>^!MAP id=(\d+)\|from=(\d+)(?:\|dir=([^|]+))?\|name=([^|]+)\|area=([^|]+)\|exits=([^|]*)(?:\|terr=([^|\r\n]*))?(?:\|mha=([^|\r\n]+))?(?:\|mh=([^|\r\n]+))?\s*$</string>
+				</regexCodeList>
+				<regexCodePropertyList>
+					<integer>1</integer>
+				</regexCodePropertyList>
+			</Trigger>
+			<Trigger isActive="yes" isFolder="no" isTempTrigger="no" isMultiline="no" isPerlSlashGOption="no" isColorizerTrigger="no" isFilterTrigger="no" isSoundTrigger="no" isColorTrigger="no" isColorTriggerFg="no" isColorTriggerBg="no">
+				<name>!MAPSEQ Command Fence</name>
+				<script>if not elro.fenceShow then deleteLine() end
+elro.onSeq(tonumber(matches[2]), matches[3] or "")</script>
+				<triggerType>0</triggerType>
+				<conditonLineDelta>0</conditonLineDelta>
+				<mStayOpen>0</mStayOpen>
+				<mCommand></mCommand>
+				<packageName></packageName>
+				<mFgColor>#ff0000</mFgColor>
+				<mBgColor>#ffff00</mBgColor>
+				<mSoundFile></mSoundFile>
+				<colorTriggerFgColor>#000000</colorTriggerFgColor>
+				<colorTriggerBgColor>#000000</colorTriggerBgColor>
+				<regexCodeList>
+					<string>(?:^|&gt; )!MAPSEQ (\d+) ?(.*)$</string>
+				</regexCodeList>
+				<regexCodePropertyList>
+					<integer>1</integer>
+				</regexCodePropertyList>
+			</Trigger>
+			<Trigger isActive="yes" isFolder="no" isTempTrigger="no" isMultiline="no" isPerlSlashGOption="no" isColorizerTrigger="no" isFilterTrigger="no" isSoundTrigger="no" isColorTrigger="no" isColorTriggerFg="no" isColorTriggerBg="no">
+				<name>!MAP Off-Map Exit</name>
+				<script>deleteLine()
+elro.onOff(tonumber(matches[2]), matches[3])</script>
+				<triggerType>0</triggerType>
+				<conditonLineDelta>0</conditonLineDelta>
+				<mStayOpen>0</mStayOpen>
+				<mCommand></mCommand>
+				<packageName></packageName>
+				<mFgColor>#ff0000</mFgColor>
+				<mBgColor>#ffff00</mBgColor>
+				<mSoundFile></mSoundFile>
+				<colorTriggerFgColor>#000000</colorTriggerFgColor>
+				<colorTriggerBgColor>#000000</colorTriggerBgColor>
+				<regexCodeList>
+					<string>^!MAP id=0\|from=(\d+)(?:\|dir=([^|\r\n]+))?\s*$</string>
 				</regexCodeList>
 				<regexCodePropertyList>
 					<integer>1</integer>
@@ -152,6 +196,41 @@ elro.relayout_this()</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^mapcur (.+)$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>maphints</name>
+				<script>elro.cmd_hints(matches[2])</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^maphints(?:\s+(.+))?$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapupdate</name>
+				<script>elro.cmd_update(matches[2])</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapupdate(?:\s+(.+))?$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapoff</name>
+				<script>elro.cmd_off(matches[2])</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapoff(?:\s+(\d+))?$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapack</name>
+				<script>elro.cmd_ack()</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapack$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapecho</name>
+				<script>elro.cmd_mapecho(matches[2])</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapecho(?:\s+(.*))?$</regex>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapcaps</name>
@@ -334,21 +413,8 @@ end</script>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapunmerge</name>
-				<script>local src = matches[2]
-if elro.merge == nil then elro.load_merge() end
-if elro.merge[src] then
-  local into = elro.merge[src]                 -- the target it was merged into
-  elro.merge[src] = nil
-  elro.save_merge()
-  -- Same as mapmerge: defer the rebuild. Mark the target dirty (only if it has a tab -- the
-  -- src area re-appears when recompute_areas next runs, and it dirties both then) and let the
-  -- user trigger the relayout manually.
-  local areas = getAreaTable() or {}
-  if areas[into] then elro.dirty[areas[into]] = true end
-  cecho("\n&lt;green&gt;[elro]: unmerged '" .. src .. "' (marked dirty; run 'maprelayout this' to rebuild).\n&lt;reset&gt;")
-else
-  cecho("\n&lt;red&gt;[elro]: no merge recorded for '" .. src .. "'.\n&lt;reset&gt;")
-end</script>
+				<script>-- your own merge, or a server hint being followed: elro.cmd_unmerge undoes either
+elro.cmd_unmerge(matches[2])</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^mapunmerge (.+)$</regex>
@@ -417,12 +483,7 @@ cecho("\n")</script>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapmerges</name>
-				<script>if elro.merge == nil then elro.load_merge() end
-local any = false
-cecho("\n&lt;cyan&gt;[elro] area merges:&lt;reset&gt;")
-for a, b in pairs(elro.merge) do cecho("\n&lt;cyan&gt;  " .. a .. " -&gt; " .. b .. "&lt;reset&gt;") ; any = true end
-if not any then cecho("\n&lt;cyan&gt;  (none)&lt;reset&gt;") end
-cecho("\n")</script>
+				<script>elro.cmd_merges()</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^mapmerges$</regex>
@@ -586,10 +647,11 @@ cecho("\n")</script>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapdelroom</name>
-				<script>elro.delete_room(tonumber(matches[2]))</script>
+				<script>if matches[2] == "sel" then elro.delete_selection()
+else elro.delete_room(tonumber(matches[2])) end</script>
 				<command></command>
 				<packageName></packageName>
-				<regex>^mapdelroom (\d+)$</regex>
+				<regex>^mapdelroom (\d+|sel)$</regex>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapsearch</name>
@@ -661,6 +723,13 @@ function elro.load_modules()
       cecho("\n&lt;red&gt;[elro] FAILED to load " .. path .. ":&lt;reset&gt; " .. tostring(err) .. "\n")
     end
   end
+  -- AND DROP THE C-SPACE SNAPSHOT. `elro` survives a reload on purpose, so
+  -- its cached view of Mudlet's rooms survives with it -- and a reload is
+  -- exactly what you reach for when the map behaves impossibly. A room deleted
+  -- in the GUI leaves its neighbours' records naming an id that is gone, and no
+  -- amount of re-sourcing CODE heals stale DATA. Re-materializing is lazy, so
+  -- this costs only a re-read of the rooms actually touched next.
+  if type(elro.cs_reset) == "function" then elro.cs_reset() end
 end
 
 elro.load_modules()</script>

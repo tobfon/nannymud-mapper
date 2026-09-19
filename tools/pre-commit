@@ -51,11 +51,17 @@ fi
 #                       path, and its body calls no elro.* FUNCTION at all (only the
 #                       elro.terrain / elro.nearKeep table reads and Mudlet C calls),
 #                       so there is nothing under it that could yield
+#   elro.off_record, elro.recenter -- both inside elro.onOff, which runs from the
+#                       "!MAP Off-Map Exit" TRIGGER on Mudlet's main thread, never in
+#                       the background coroutine. Checked 2026-09-19: core.lua's one
+#                       tick site is in the relayout body and render.lua has none, so
+#                       nothing either of them calls (stubs, the placeholder room,
+#                       view_assert, view_unstick, draw_area_stubs) can reach bg_tick
 #
 # Scoped to lua/ -- the code that actually runs inside Mudlet. analysis/ harnesses
 # are exempt on purpose: they pcall our functions deliberately, to PROVE the rule
 # (test_bgcs.lua wraps pcall to emulate the 5.1 restriction LuaJIT does not have).
-ALLOWED='elro\.topo_cross|elro\.compose_spqr|elro\.wire_cross|elro\.near_scan'
+ALLOWED='elro\.topo_cross|elro\.compose_spqr|elro\.wire_cross|elro\.near_scan|elro\.off_record|elro\.recenter'
 for f in $(git diff --cached --name-only --diff-filter=ACM -- '*/client/lua/*.lua'); do
   bad=$(git show ":$f" | grep -n 'pcall( *elro\.' | grep -Ev "pcall\( *($ALLOWED)\b")
   if [ -n "$bad" ]; then
