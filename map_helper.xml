@@ -265,6 +265,13 @@ else say("walk watchdog: " .. (elro.walkWatchdog == false and "off" or tostring(
 				<regex>^mapvert(?:\s+(.+))?$</regex>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
+				<name>mapwin</name>
+				<script>elro.mapwin(matches[2])</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapwin(?:\s+(reset|lock|unlock|left|right))?$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
 				<name>maptop</name>
 				<script>elro.dump_steptop(matches[2])</script>
 				<command></command>

@@ -28,8 +28,11 @@ game tells you when a newer version is out. By hand: Mudlet refuses to install o
 that is already there ("package ElrohirMapper is already installed"), so remove `ElrohirMapper`
 under Toolbox → Package Manager first, then install the new one.
 
-**Open the map.** Click the **Map** button in Mudlet's top bar. The package cannot do this
-for you. The map is recorded either way, but you only see it with that window open.
+**The map window.** The first time the package loads it opens the map as a small window over
+the top right corner of the text. Drag its inner or bottom edge to resize it; the size is
+remembered. `mapwin` closes it and opens it again, `mapwin left` moves it to the other corner,
+`mapwin lock` removes its frame. Mudlet's own **Map** button still works if you would rather
+have the map docked; Mudlet shows one map per profile, so close this one with `mapwin` first.
 
 **2. Switch the stream on, in game.** The server sends the events only to players who asked
 for them, because without this package they are a line of text on every move:

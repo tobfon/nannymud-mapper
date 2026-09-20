@@ -28,6 +28,7 @@ module never needs a package reinstall. Offline harnesses loop over the same lis
 | `walk.lua` | `walk_branches`: the room-by-room walk that drives placement; `layout_eqw`, the live entry |
 | `render.lua` | overlays (demoted, residual, stubs), the `mapstep` replay, diagnostic commands |
 | `vert.lua` | up/down exits: classification, docking floors, bridge pistons, drawing |
+| `window.lua` | `mapwin`: the map as a small resizable window inside the session |
 
 Every module binds what it needs from earlier ones into file-scope locals at load
 (`elro.g`, `elro.k`, `elro.exits`, `elro.clk`, `elro.TUNE`, `elro.area_adjacency`) and fails
@@ -306,7 +307,56 @@ the one definition of "this drawing tells the truth about this exit", shared by 
 `stepDebug`; each frame carries the closure trace and the lever options that were ranked, in the
 same colours as the collision dump.
 
-## 9. Contracts that are easy to break
+### The map window (window.lua)
+
+`mapwin` puts a `Geyser.Mapper` inside an `Adjustable.Container` over the top right of the text.
+It is embedded (`createMapper`), so it belongs to one session and follows that session's console
+under MultiView; `openMapWidget` would have made a dock or a free window instead. The container
+supplies resizing, the lock styles and the save file.
+
+* **The corner pin is ours.** The container's own attach reserves a console border, which keeps
+  text out of the whole strip beside the map; the player wants text drawn underneath. And under
+  MultiView `getMainWindowSize()` is the whole Mudlet window (measured 2560 against a 1280
+  pane), so Geyser clamps and places against the wrong width and the box can be dragged out of
+  the session. `anchor()` therefore keeps only the size the player chose, in pixels, and moves
+  the box to `pane_width() - width, 0` after every drag (`AdjustableContainerRepositionFinish`)
+  and every `sysWindowResizeEvent`. A second session opening beside this one raises no event
+  (seen live: the box stayed put until the divider was moved), so while the window is up a one
+  second timer compares the box's right edge with `pane_width()` and re-pins on a difference.
+  The module restarts that timer at load when the window exists, because `elro` survives a
+  reload or reinstall and the old timer chain does not. `pane_width()` is the one place that knows how to measure
+  the session. Probed live with two sessions side by side: the one opened in MultiView read
+  `getMainWindowSize()` 1278, its true pane, while the one that began in single view still read
+  2560; both had 110 columns. So the main size is believed only when it lies within 6% above
+  columns times `calcFontSize`, and then the edge is that size less the scrollbar. Otherwise
+  the edge is columns times a cell width calibrated from the last believable reading (the
+  smallest seen, since a partial column only ever inflates it), because `calcFontSize` says
+  11.3 where the cell is 11.46 and that alone left an 18 pixel gap. `getMainConsoleWidth()`
+  was tried and read 1111 in a 2545 pixel pane and in a 1280 one alike.
+
+* **It opens by itself once.** A new player has no map on screen and does not know to ask for
+  one, so with no save file the window opens at load (or a second after a mid-session install,
+  which gets no `sysLoadEvent`) and says how to close it. After that the container's save file
+  is the only record: the window comes back only if the file does not say hidden, so a player
+  who closed it is not shown it again. Cost: that first open closes a docked Mudlet map.
+* **Mudlet's `generic_mapper` stays installed.** It answers `mapOpenEvent` by sending `look` and
+  printing its quick-start three seconds later. Other scripts a player runs may depend on it, so
+  it is not uninstalled, and its saved state is not touched. Its handlers are registered by name
+  (`"map.eventHandler"`), which Mudlet resolves at each dispatch, so `quietly()` wraps that global
+  for half a second around anything that raises the event and drops that one event. The restore
+  is on a timer because it is not established that the event is delivered synchronously.
+* **Left or right.** The right corner is the default because text runs from the left and a map
+  there hides the start of every line; `mapwin left` exists for a player whose right corner
+  is taken by another overlay. The side is not stored: a box saved with its left edge at the
+  console's left edge is a left box when it is rebuilt.
+* **The banner.** Mudlet's "Short" map info (name / id (area)) fills a 380 pixel map, and
+  neither its font nor its background can be set from Lua (the background is the preference
+  behind `setMapInfoBgColor`, translucent by default, which is why rooms show through it). The
+  module registers a "Room name" info and, on the first ever open and on `mapwin reset`, turns
+  Short and Full off and that one on. Only then: the choice is the player's afterwards, in the
+  map's right-click menu.
+* **One mapper per profile.** Building the window closes a docked or floating map first.
+ that are easy to break
 
 - **Key text is a layout contract.** `keys.lua`'s formats are index keys, trace labels and the
   final tie-break in `_rank_cands`. Changing a key's text changes layouts; A/B it as one.

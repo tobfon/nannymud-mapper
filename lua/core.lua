@@ -9,7 +9,7 @@ elro.dirty = elro.dirty or {}     -- areaID -> true: needs relayout
 elro.ns_cap = elro.ns_cap or 5000  -- max rooms for the O(V^2 E) NS engine; above -> flood
 -- Reported to the server by the handshake in onRoom. Kept in step with config.lua's
 -- `version` by tools/build-package.sh, which refuses to build if the two differ.
-elro.VERSION = "1.1.1"
+elro.VERSION = "1.2.0"
 
 elro.relayout_timer = elro.relayout_timer or nil
 -- min internally-connected cluster size for a server-area to keep its own tab;
@@ -4136,19 +4136,29 @@ function elro.update_swap(path)
   -- install is how a player ends up with no package.
   if elro._updBusy then return end
   elro._updBusy = true
+  -- installPackage can fail without throwing, so the package list is the verdict.
+  local function installed()
+    if type(getPackages) ~= "function" then return true end
+    for _, p in ipairs(getPackages() or {}) do if p == "ElrohirMapper" then return true end end
+    return false
+  end
+  local function try(left)
+    local ok, err = pcall(installPackage, path)
+    if ok and installed() then
+      elro._updBusy = nil
+      -- the loader has just printed the version line; this only adds the reassurance
+      cecho("<green>[elro]: updated. Your map is untouched.\n<reset>")
+    elseif left > 0 then
+      tempTimer(2, function() try(left - 1) end)
+    else
+      elro._updBusy = nil
+      cecho("\n<red>[elro]: the install failed" .. (ok and "" or ": " .. tostring(err)) ..
+            ".\n  Drag " .. path .. " onto Mudlet to finish by hand. Your map is untouched.\n<reset>")
+    end
+  end
   tempTimer(0.1, function()
     pcall(uninstallPackage, "ElrohirMapper")
-    tempTimer(1, function()
-      local ok, err = pcall(installPackage, path)
-      elro._updBusy = nil
-      if ok then
-        -- the loader has just printed the version line; this only adds the reassurance
-        cecho("<green>[elro]: updated. Your map is untouched.\n<reset>")
-      else
-        cecho("\n<red>[elro]: the install failed: " .. tostring(err) ..
-              "\n  Drag " .. path .. " onto Mudlet to finish by hand.\n<reset>")
-      end
-    end)
+    tempTimer(1, function() try(1) end)
   end)
 end
 
@@ -4165,6 +4175,8 @@ function elro.cmd_update(arg)
     cecho("\n<red>[elro]: this Mudlet cannot install packages from a script.\n<reset>") return
   end
   if arg ~= "" then                       -- a local build: no download
+    -- Mudlet takes the package name from the text after the last "/"
+    arg = arg:gsub("\\", "/")
     local f = io.open(arg, "rb")
     if not f then cecho("\n<red>[elro]: no such file: " .. arg .. "\n<reset>") return end
     f:close()
@@ -4959,7 +4971,8 @@ local HELP_BASIC = {
   { "BASICS" },
   { "maphelp [advanced]", "this list; 'advanced' adds diagnostics and tuning" },
   { "mapupdate",          "replace this package with the newest release. Downloads first, so a failed download changes nothing; your map is untouched" },
-  { "mapecho [on|off]",   "should a relayout report when it finishes (time, frames, the solver's profile)? Off by default, and then no relayout prints anything" },
+  { "mapwin [left|right|lock|unlock|reset]", "open or close the map as a small window pinned over a top corner of the text (it opens by itself the first time). Drag its inner or bottom edge to resize it; size and corner are remembered. 'lock' removes the frame, 'reset' restores the first size and the right corner" },
+  { "mapecho [on|off]",  "should a relayout report when it finishes (time, frames, the solver's profile)? Off by default, and then no relayout prints anything" },
   { "mapgoto <id|area>",  "speedwalk to a room id, or the nearest room of a named area (substring ok)" },
   { "mapnear [terrain]",  "walk to the nearest room of a terrain (heal, shop, port...); bare = list the names you can search for" },
   { "mapsearch <pat>",    "search room and area names; lists matching rooms with ids" },
