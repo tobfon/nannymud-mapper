@@ -56,7 +56,9 @@ maplink off      stop streaming
 answers "What?", you do not have it yet, and Elrohir can hand it to you. Not every area is
 mapped: the administrators open them one at a time.
 
-Then walk. Type `maphelp` for the commands, `maphelp advanced` for the diagnostic ones.
+Then walk. Type `maphelp` for the everyday commands and `maplegend` for what the colours,
+dots, letters and lines on the map mean. `maphelp advanced` has the rest: shaping the map by
+hand, mazes, diagnostics and tuning.
 
 ## What you get
 
@@ -67,6 +69,17 @@ edge is least bad to bend rather than letting the map drift. Up and down exits d
 separate floors. Areas too small to deserve a tab fold into the world map.
 
 It relayouts as you explore, in the background, without freezing the client.
+
+`mapexport` writes the map you are standing on as a picture: white, with pale terrain tints,
+every room numbered, and a list of the rooms with where each way off the map leads. It is an
+SVG, which any browser opens and a wiki can show. `mapexport a4` fits the same drawing on one
+A4 sheet to print.
+
+That is a picture, not a copy of your map. The map itself lives in the Mudlet profile, and
+Mudlet moves it: Settings, the Mapper tab, has **Copy map to other profile(s)**, **Save
+map...** and **Load map...** (loading replaces the map in that profile; nothing is merged).
+Everything this package knows travels in that file. Reopen a profile after a map is loaded
+into it. `maphelp share` says the same in the client.
 
 ## Using it with another MUD
 

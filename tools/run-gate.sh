@@ -28,7 +28,7 @@ cd "$(dirname "$0")/.." || exit 1
 
 command -v luajit >/dev/null 2>&1 || exit 0
 
-FAST="cross_rank relayout terrain near mazefit mazevertex stubs hints vert vertpack mapwipe onroom guesscheck shearall"
+FAST="cross_rank relayout terrain near mazefit mazevertex stubs hints vert vertpack mapwipe onroom guesscheck shearall export"
 SLOW="cd_layout count_defects"
 
 TESTS="$FAST"

@@ -58,6 +58,7 @@ function getMapSelection() return {} end
 function centerview() end
 function updateMap() end
 function cecho(s) if os.getenv("VERBOSE") then io.write((tostring(s):gsub("<[^>]->", ""))) end end
+decho = cecho
 function getMapUserData() return "" end
 function setMapUserData() end
 function saveMap() end

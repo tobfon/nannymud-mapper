@@ -9,7 +9,7 @@ elro.dirty = elro.dirty or {}     -- areaID -> true: needs relayout
 elro.ns_cap = elro.ns_cap or 5000  -- max rooms for the O(V^2 E) NS engine; above -> flood
 -- Reported to the server by the handshake in onRoom. Kept in step with config.lua's
 -- `version` by tools/build-package.sh, which refuses to build if the two differ.
-elro.VERSION = "1.2.1"
+elro.VERSION = "1.3.0"
 
 elro.relayout_timer = elro.relayout_timer or nil
 -- min internally-connected cluster size for a server-area to keep its own tab;
@@ -3328,11 +3328,132 @@ function elro.terrain_list()
   cecho("  <white>rank group     terrain           cell  dot<reset>\n")
   for _, r in ipairs(rows) do
     local c = r.t.col
-    -- the terrain's own colour as the swatch, so the list doubles as the palette
-    cecho(string.format("  %4d %-9s <#%02x%02x%02x>%-14s<reset> %7d %4d\n",
+    -- the terrain's own colour as the swatch, so the list doubles as the palette.
+    -- decho: cecho knows named colours only and prints a hex tag as text.
+    decho(string.format("  %4d %-9s <%d,%d,%d>%-14s<r> %7d %4d\n",
           r.t.rank, r.t.group, c[1], c[2], c[3], r.name, r.p, r.s))
   end
   if #rows == 0 then cecho("  (nothing yet -- walk around, or check the server sends |terr=)\n") end
+end
+
+-- maplegend: every terrain in its own colour with what it means, then how to read the rest
+-- of the drawing. Rows come from elro.terrain, so the legend cannot drift from the painter;
+-- only the wording lives here, and a terrain without wording still shows by name.
+-- How wide help may be: the wrap column (Mudlet's default is 100, which the layouts are made
+-- for), or the columns the window actually shows if that is fewer, since Mudlet cuts a line
+-- off at the window's edge rather than wrapping it there. 80 where Mudlet cannot say.
+function elro.help_width()
+  local ok, w = pcall(function() return getWindowWrap("main") end)
+  if not ok or type(w) ~= "number" or w < 40 then w = 80 end
+  local ok2, c = pcall(function() return getColumnCount("main") end)
+  if ok2 and type(c) == "number" and c >= 40 and c < w then w = c end
+  return w
+end
+
+-- Plain text into lines of at most `width`, broken at spaces. A word longer than a line
+-- stays whole.
+function elro.wrap_text(text, width)
+  local lines, cur = {}, ""
+  for word in tostring(text):gmatch("%S+") do
+    if cur == "" then cur = word
+    elseif #cur + 1 + #word <= width then cur = cur .. " " .. word
+    else lines[#lines + 1] = cur ; cur = word end
+  end
+  if cur ~= "" then lines[#lines + 1] = cur end
+  return lines
+end
+
+-- Two columns of groups, set side by side; the split is by hand so the columns end level.
+local LEGEND_COLS = {
+  { { "aid", "WORTH FINDING" }, { "travel", "TRAVEL" }, { "sacred", "SACRED" },
+    { "way", "WAYS" }, { "water", "WATER" }, { "built", "BUILT AND TENDED" } },
+  { { "land", "LAND" }, { "surf", "UNDERFOOT" }, { "maze", "MAZES" },
+    { "fallback", "EVERYTHING ELSE" } },
+}
+-- Made for 80 columns, the width NannyMUD itself is written for: two cells of at most 39.
+-- So a meaning in LEGEND_TEXT may be 22 characters at most, and 21 in the left column.
+local LEGEND_W = 40          -- where the right column starts
+local LEGEND_TEXT = {
+  heal = "a place to be healed",           shop = "buys and sells",
+  transport = "a ship or a coach",         port = "where transport stops",
+  holy = "holy ground",                    unholy = "unholy ground",
+  road = "a road",  track = "a path or trail",  bridge = "a bridge",
+  sea = "open sea",  waterfilled = "a room full of water",  lake = "a lake",  river = "a river",
+  cave = "a cave",  underground = "underground",  mountain = "mountain",  cliffs = "cliffs",
+  swamp = "swamp",  jungle = "jungle",  forest = "forest",  desert = "desert",  hills = "hills",
+  beach = "a beach",  meadow = "meadow",  plain = "open plain",
+  urban = "a town or city",  square = "a town square",  garden = "a garden",
+  cultivated = "farmland",
+  ice = "ice",  snow = "snow",  mud = "mud",  sand = "sand",  grass = "grass",
+  water = "water in the room",  waterside = "beside water",
+  maze = "a maze, as one spot",
+  indoors = "indoors (no detail)",
+  outdoors = "outdoors (no detail)",
+}
+function elro.map_legend()
+  cecho("\n<cyan>ElrohirMapper  --  what the colours on the map mean<reset>\n\n")
+  -- each column is a list of { markup, visible width }: decho tags take no room on screen
+  local cols = {}
+  for ci, groups in ipairs(LEGEND_COLS) do
+    local lines = {}
+    for _, g in ipairs(groups) do
+      local rows = {}
+      for name, t in pairs(elro.terrain) do
+        if t.group == g[1] then rows[#rows + 1] = { name = name, t = t } end
+      end
+      table.sort(rows, function(x, y) return x.t.rank < y.t.rank end)
+      if #rows > 0 then
+        if #lines > 0 then lines[#lines + 1] = { "", 0 } end
+        lines[#lines + 1] = { "<0,255,255>" .. g[2] .. "<r>", #g[2] }
+      end
+      for _, r in ipairs(rows) do
+        local c, text = r.t.col, LEGEND_TEXT[r.name] or ""
+        -- the name sits ON its colour; dark text on a light swatch, light on a dark one
+        local fg = (c[1] * 299 + c[2] * 587 + c[3] * 114) / 1000 > 140 and "0,0,0" or "255,255,255"
+        lines[#lines + 1] = {
+          string.format("  <%s:%d,%d,%d> %-11s <r>  %s", fg, c[1], c[2], c[3], r.name, text),
+          2 + 13 + 2 + #text }
+      end
+    end
+    cols[ci] = lines
+  end
+  local width = elro.help_width()
+  if width >= 80 then
+    for i = 1, math.max(#cols[1], #cols[2]) do
+      local l, r = cols[1][i] or { "", 0 }, cols[2][i]
+      decho(l[1] .. (r and (string.rep(" ", math.max(2, LEGEND_W - l[2])) .. r[1]) or "") .. "\n")
+    end
+  else                                        -- a narrow window: one column, one after the other
+    for ci, lines in ipairs(cols) do
+      if ci > 1 then decho("\n") end
+      for _, l in ipairs(lines) do decho(l[1] .. "\n") end
+    end
+  end
+  local function para(text)
+    for _, l in ipairs(elro.wrap_text(text, width - 3)) do cecho("  " .. l .. "\n") end
+  end
+  cecho("\n<cyan>READING A ROOM<reset>\n")
+  para("The room's colour is the most telling thing known about it: a road through a forest "
+    .. "is drawn as a road. A dot in the middle is a second thing worth knowing, such as a "
+    .. "healer's dot on a town room. A letter is an exit you type instead of a direction "
+    .. "(E for enter, * for several kinds); ports and transport show their dot instead.")
+  cecho("\n<cyan>READING THE LINES<reset>\n")
+  local function line(c, text)
+    for i, l in ipairs(elro.wrap_text(text, width - 10)) do
+      decho(i == 1 and string.format("  <%d,%d,%d>-----<r>  %s\n", c[1], c[2], c[3], l)
+                    or ("         " .. l .. "\n"))
+    end
+  end
+  local cc = elro.classColours or {}
+  line({ 80, 160, 255 }, "a short stub: this exit leads onto another map (violet: into a maze)")
+  line(cc.vertical or { 0, 210, 190 },  "an up or down exit, drawn slanted between two floors")
+  line(cc.demoted  or { 255, 60, 220 }, "an exit the mapper does not believe: the two rooms disagree about it")
+  line(cc.residual or { 255, 60, 60 },  "an exit it believes but could not draw in its true direction")
+  line(cc.occluded or { 255, 210, 0 },  "a true exit with another room sitting on top of it")
+  para("A plain short stub is an exit you have not walked yet.")
+  cecho("\n")
+  para("'mapterrain off' removes the colours, 'mapglyphs off' the letters.")
+  cecho("\n")
 end
 
 -- mapterrain halo [<radius> [<rim> [<centre>]]]: set the secondary-terrain ring and
@@ -3392,7 +3513,7 @@ function elro.terrain_here()
   local function show(what, t, name)
     if not t then cecho(string.format("  %-9s (none)\n", what .. ":")) return end
     local c = t.col
-    cecho(string.format("  %-9s <#%02x%02x%02x>%s<reset>   rank %d  group %s  env %d  rgb(%d,%d,%d)\n",
+    decho(string.format("  %-9s <%d,%d,%d>%s<r>   rank %d  group %s  env %d  rgb(%d,%d,%d)\n",
           what .. ":", c[1], c[2], c[3], name, t.rank, t.group, t.env, c[1], c[2], c[3]))
   end
   show("cell", cell, cn)
@@ -4838,6 +4959,45 @@ if type(addMapEvent) == "function" and type(registerAnonymousEventHandler) == "f
   end)
 end
 
+-- mapavoid: keep speedwalks out of a room. Mudlet's own room lock (the map's right-click
+-- "Lock" sets the same flag), which getPath honours, so it holds for mapgoto, mapnear, a
+-- double-click and the right-click walk alike. Stored in the map; a relayout leaves it alone.
+function elro.cmd_avoid(arg, on)
+  if type(lockRoom) ~= "function" or type(roomLocked) ~= "function" then
+    cecho("\n<red>[elro]: this Mudlet cannot lock rooms.\n<reset>") return
+  end
+  arg = (arg or ""):gsub("^%s+", ""):gsub("%s+$", "")
+  if arg == "" and on == nil then                       -- bare mapavoids: list
+    local rows = {}
+    for id in pairs(elro.cs_all_rooms()) do
+      if roomExists(id) and roomLocked(id) then rows[#rows + 1] = id end
+    end
+    table.sort(rows)
+    cecho(string.format("\n<cyan>[elro] %d room(s) speedwalks keep out of:<reset>\n", #rows))
+    for _, id in ipairs(rows) do
+      cecho(string.format("<yellow>  %d<reset>  %s\n", id, getRoomName(id) or "?"))
+    end
+    if #rows == 0 then cecho("  (none -- 'mapavoid' marks the room you are in, 'mapavoid <id>' another)\n") end
+    return
+  end
+  local ids = {}
+  if arg == "" or arg == "here" then
+    ids[1] = elro.current
+  elseif arg == "sel" then
+    ids = elro.sel_rooms() ; if not ids then return end
+  else
+    for tok in arg:gmatch("[^,%s]+") do ids[#ids + 1] = tonumber(tok) end
+  end
+  local n = 0
+  for _, id in ipairs(ids) do
+    if id and roomExists(id) then lockRoom(id, on) ; n = n + 1 end
+  end
+  if n == 0 then cecho("\n<red>[elro]: no such room. 'mapsearch <text>' finds ids.\n<reset>") return end
+  cecho(string.format("\n<green>[elro]: speedwalks %s %d room(s).%s\n<reset>",
+        on and "now keep out of" or "may use", n,
+        on and " A walk with no other way round will say there is no path." or ""))
+end
+
 -- list outgoing and incoming edges for a room (default: current room)
 function elro.list_edges(id)
   id = id or elro.current
@@ -4978,63 +5138,69 @@ function elro.delete_room(id)
   cecho(string.format("\n<green>[elro]: deleted room %d (%s) and all its edges.\n<reset>", id, rname))
 end
 
--- maphelp. Three groups by what a command TOUCHES: map data (rooms/exits/areas), appearance
--- (drawing only), diagnostics (reads, changes nothing). Bare `maphelp` shows what you use while
--- playing; `maphelp advanced` shows the diagnostic and tuning surface, which is most of the list
--- and none of the daily work. Lives here, not in the alias, so the text is editable without XML
--- entity escaping -- the alias is one call.
+-- maphelp. Bare `maphelp` is what a player uses while playing and must stay short; everything
+-- for hand-shaping, mazes, diagnosis and tuning is under `maphelp advanced`. Lives here, not in
+-- the alias, so the text is editable without XML entity escaping -- the alias is one call.
 local HELP_BASIC = {
   { "BASICS" },
-  { "maphelp [advanced]", "this list; 'advanced' adds diagnostics and tuning" },
+  { "maphelp [advanced]", "this list; 'advanced' has the commands for shaping the map by hand, mazes, diagnostics and tuning" },
   { "mapupdate",          "replace this package with the newest release. Downloads first, so a failed download changes nothing; your map is untouched" },
   { "mapwin [left|right|lock|unlock|reset]", "open or close the map as a small window pinned over a top corner of the text (it opens by itself the first time). Drag its inner or bottom edge to resize it; size and corner are remembered. 'lock' removes the frame, 'reset' restores the first size and the right corner" },
-  { "mapecho [on|off]",  "should a relayout report when it finishes (time, frames, the solver's profile)? Off by default, and then no relayout prints anything" },
-  { "mapgoto <id|area>",  "speedwalk to a room id, or the nearest room of a named area (substring ok)" },
+  { "maplegend",          "what the colours, dots, letters and lines on the map mean" },
+  { "mapexport [area] [a4] [plain]", "write one map as a picture (an SVG any browser opens): white, pale terrain tints, every room numbered and listed, as big as the map needs. Bare = the map you are on. 'a4' fits it on one sheet to print instead; 'plain' leaves the tints out. A picture, not a copy of your map" },
+  { "maphelp share",      "how to copy your map to another profile, back it up, or give it to someone" },
+  { "mapgoto <id|area>", "speedwalk to a room id, or the nearest room of a named area (substring ok). Double-clicking a room on the map walks there too, as does 'Walk here' in its right-click menu" },
   { "mapnear [terrain]",  "walk to the nearest room of a terrain (heal, shop, port...); bare = list the names you can search for" },
-  { "mapsearch <pat>",    "search room and area names; lists matching rooms with ids" },
-  { "mapcur <id|area>",   "set the current room by hand: an id, or any room of a named area" },
-  { "maprelayout",        "relayout only the maps that changed (incremental)" },
-  { "maprelayout all",    "relayout every map -- needed after a global setting change" },
-  { "maprelayout this",   "force a relayout of the CURRENT canvas, changed or not" },
-  { "mapauto on|off|idle N", "auto relayout: at once when a room lands ON another, else N secs after you stop (default ON, 3s)" },
+  { "mapavoid [id,...|sel]", "keep speedwalks out of a room (bare = the one you are in): a death trap, an aggressive monster. The same as 'Lock' in the map's right-click menu" },
+  { "mapunavoid [id,...|sel]", "let speedwalks use it again   (mapavoids = list them)" },
+  { "mapsearch <text>",  "find rooms whose name, or whose area's name, contains the text (any case); lists them with the ids 'mapgoto' takes" },
 
-  { "MAP DATA -- changes rooms, exits or areas" },
+  { "FIXING THE MAP -- changes rooms, exits or areas" },
   { "mapwipe [area] [confirm]", "delete the whole map, or every room the SERVER put in one area; without 'confirm' it only reports what it would delete" },
-  { "mapdelroom <id>",    "delete a room and every edge to or from it, then relayout" },
-  { "mapdelroom sel",     "the same for every room selected in the mapper (also in its right-click menu)" },
+  { "mapdelroom <id>|sel", "delete a room and every edge to or from it, then relayout; 'sel' = every room selected in the mapper (also in its right-click menu)" },
   { "mapdeledge <f> <t>", "delete all edges from room f to room t (compass + special)" },
   { "maprecordmove [cmd]","record a special or multi-step exit (bare = capture interactively)" },
   { "mapmerge <area>",    "merge that area into the one you are standing in" },
   { "mapunmerge <area>",  "undo a merge, yours or one the game suggested   (mapmerges = list both)" },
   { "maphints [on|off [area]]", "the game may suggest drawing an area on another map (a town built by several wizards). Follow the suggestions or not, for all areas or one; bare = list them" },
+
+  { "APPEARANCE -- changes only how the map is drawn" },
+  { "mapterrain [on|off]","colour rooms by terrain ('maplegend' says which colour is what)" },
+  { "mapglyphs [on|off]", "a letter on rooms with an exit you type instead of a direction" },
+  { "mapstubs [on|off|halo N]","what the canvas draws (rooms/edges/stubs/lines). Mudlet redraws every stub every frame, so a big part-explored area is slow: the HALO shows only stubs within N cells of you once an area has a lot. Lossless -- the record is kept" },
+  { "mapvert [on|off]",   "dock up/down exits as separate floors (remembered)" },
+  { "mapareamin <n>",     "smallest cluster that keeps its own area off the world map (persistent)" },
+}
+local HELP_ADV = {
+  { "SHAPING THE MAP BY HAND" },
+  { "mapcur <id|area>",   "set the current room by hand: an id, or any room of a named area" },
   { "mapfold <dir>",      "fold the branch through that exit into a submap" },
   { "mapunfold <dir>",    "undo a fold   (mapfolds = list them)" },
   { "mapsteal <id,...>",  "steal room(s) into the area you are standing in, in one relayout" },
   { "mapunsteal <id,...>","return stolen room(s) to their own area   (mapsteals = list them)" },
+  { "mapouter [clear] [id,...]","mark room(s) as ON THE OUTER FACE, drawn outermost; bare = list, clear = unmark" },
+
+  { "MAZES AND SHIFTING EXITS" },
   { "mapmaze [auto [area|.]]","fold untruthful clusters; bare = current room, auto = whole map, auto <area> = one server area" },
   { "mapmaze sel",        "mark every room selected in the viewer as maze, then fold once -- for mirror mazes, which mutate nothing and so are invisible to 'auto'" },
   { "mapunmaze [all|id,...]", "release the current room's whole maze submap; with room ids (or 'here') release only those, leaving the rest folded; 'all' releases every submap and clears the maze override   (mapmazes = list them)" },
-  { "mapstubs [on|off|halo N]","what the canvas draws (rooms/edges/stubs/lines). Mudlet redraws every stub every frame, so a big part-explored area is slow: the HALO shows only stubs within N cells of you once an area has a lot. Lossless -- the record is kept" },
-  { "mapprofile [on|off|ms]","time the phases of each move (graph / terrain / guess / relayout / view) and print the ones over <ms>; for finding what a slow move is actually doing" },
   { "mapmazelive [area|.|clear]","what the last solve DID with this area's maze doors: which are drawn as spokes, which fell back to a stub, and whether the area was vetoed; 'clear' lifts vetoes" },
   { "mapmazefit [area|.]","report whether each maze could be ONE layout vertex: its doors, their directions, and where that vertex would sit (read-only)" },
-  { "mapouter [clear] [id,...]","mark room(s) as ON THE OUTER FACE, drawn outermost; bare = list, clear = unmark" },
   { "mapexitlock [<dir>]","lock the current room's compass exit(s) so the server hook cannot re-point them" },
   { "mapexitunlock [<dir>]","clear exit lock(s) on the current room (default: all)" },
   { "mapmutreset [id|area|all]","wipe exit-mutation counters (default: current room)" },
 
-  { "APPEARANCE -- changes only how the map is drawn" },
-  { "mapterrain [on|off|list]","colour rooms by terrain: cell = primary, circle = secondary; bare = repaint from stored data" },
+  { "APPEARANCE, IN DETAIL" },
+  { "mapterrain list",    "how many rooms of each terrain the map holds, as cell and as dot; bare 'mapterrain' repaints from stored data" },
   { "mapterrain here",    "what the server actually sent for THIS room and what it resolved to -- separates 'not sent' from 'not coloured'" },
   { "mapterrain halo ...","tune the secondary ring: <radius> [rim alpha] [centre alpha]; bare = current values" },
-  { "mapglyphs [on|off]", "glyph rooms with non-compass exits, advertised or recorded; bare = repaint and count" },
   { "mapglyphs list",     "which rooms are glyphed, their exit names and the source of each (a/r/s)" },
   { "mapglyphs auto on|off","count auto special exits as glyph evidence; off = advertised + recorded only" },
-  { "mapvert [area|all|on|off]","up/down census, and what the last pack honoured and drew; on|off switches packing and is remembered" },
-  { "mapareamin <n>",     "smallest cluster that keeps its own area off the world map (persistent)" },
-}
-local HELP_ADV = {
+  { "mapvert [area|all]", "up/down census, and what the last pack honoured and drew" },
+
   { "DIAGNOSTICS -- read the layout, change nothing" },
+  { "mapprofile [on|off|ms]","time the phases of each move (graph / terrain / guess / relayout / view) and print the ones over <ms>; for finding what a slow move is actually doing" },
+  { "mapecho [on|off]",   "should a relayout report when it finishes (time, frames, the solver's profile)? Off by default, and then no relayout prints anything" },
   { "mapoff [id]",        "what is recorded for a room about exits that leave the map: the record, the stubs, the custom lines" },
   { "mapack",             "tell the game which client this is, again. Needed only if 'maplink' says no client has answered" },
   { "mapaudit [all]",     "exits whose geometry the trustworthy (walked-both-ways) exits refute -- usually mistyped links" },
@@ -5051,6 +5217,8 @@ local HELP_ADV = {
   { "maplever [<ek>..]",  "force named lever(s) to the front of every ranking; no arg = list, off = clear" },
 
   { "TUNING, TIMING AND STATE" },
+  { "maprelayout [all|this]", "redraw the maps that changed; 'all' = every map, 'this' = the one you are looking at, changed or not. It happens by itself; this is for after a setting change" },
+  { "mapauto on|off|idle N", "auto relayout: at once when the drawing is visibly wrong, else N secs after you stop (default ON, 3s)" },
   { "mapknobs [reset]",   "every knob and probe OVERRIDDEN this session; 'reset' clears them. elro survives mapreload and a git checkout, so a knob left set looks exactly like a code change that did nothing -- run this before trusting any measurement" },
   { "mapbg [on|off|cancel|slice N]","background (non-freezing) relayout: state, toggle, abort, or per-frame ms budget" },
   { "mapbg gc N | hook N","collect between frames / report the SOURCE LINES that blew the frame budget" },
@@ -5060,28 +5228,86 @@ local HELP_ADV = {
   { "mapreload",          "re-read lua/modules.lua and every module from disk -- no package reinstall needed; also drops the c-space snapshot, since a reload heals stale CODE and that cache is stale DATA (mapcs reset does it alone)" },
   { "mapsrc [path]",      "show or set the directory those modules are loaded from (persistent)" },
 }
+-- maphelp share: moving the MAP itself is Mudlet's job, and is what people expect 'mapexport'
+-- to do. Everything this package knows is in Mudlet's map file (room and map user data), so
+-- Mudlet's own copy carries all of it.
+local HELP_SHARE = {
+  "'mapexport' makes a picture to print. It does not copy your map. The map itself lives in "
+    .. "your Mudlet profile, and Mudlet moves it:",
+  "",
+  "TO ANOTHER PROFILE OF YOURS|Settings, the Mapper tab, 'Copy map to other profile(s)': pick "
+    .. "the profiles and press Copy.",
+  "TO A FILE|Settings, the Mapper tab, 'Save map...'. A backup, or something to hand to "
+    .. "another player.",
+  "FROM A FILE|Settings, the Mapper tab, 'Load map...'. This REPLACES the map in that profile; "
+    .. "the two are not merged. Save your own first if you may want it back.",
+  "",
+  "After a map is loaded or copied into a profile that is open, close and reopen that profile "
+    .. "so the mapper reads the new map from the start.",
+  "",
+  "The file carries everything: rooms, exits, the special exits you recorded, terrain, merges, "
+    .. "folds and the rooms speedwalks keep out of. Only the map window's size and corner "
+    .. "belong to the profile. The receiving profile needs this package too, and 'maplink on' "
+    .. "in the game to keep mapping.",
+  "",
+  "A map shows where you have been. Handing one over hands over that exploring.",
+}
+
 function elro.map_help(arg)
+  if (arg or ""):match("^%s*shar") then
+    local width = elro.help_width()
+    cecho("\n<cyan>ElrohirMapper  --  moving your map<reset>\n\n")
+    for _, p in ipairs(HELP_SHARE) do
+      local head, body = p:match("^(.-)|(.+)$")
+      if head then cecho("<yellow>  " .. head .. "<reset>\n") end
+      for _, l in ipairs(elro.wrap_text(body or p, width - (head and 5 or 3))) do
+        cecho((head and "    " or "  ") .. l .. "\n")
+      end
+      if p == "" then cecho("\n") end
+    end
+    cecho("\n")
+    return
+  end
   local adv = (arg or ""):match("adv") ~= nil
+  -- Wrapped here, with a hanging indent: left to Mudlet a long row breaks back to column 0.
+  -- A narrow window gets a narrower command column; a command too long for it takes a line
+  -- of its own.
+  local width = elro.help_width()
+  local col = width >= 90 and 30 or 22
   local function emit(rows)
     for _, row in ipairs(rows) do
       if #row == 1 then
         cecho("\n<cyan>" .. row[1] .. "<reset>\n")
       else
-        cecho(string.format("<yellow>  %s<reset>%s%s\n",
-              row[1], string.rep(" ", math.max(1, 28 - #row[1])), row[2]))
+        local lines = elro.wrap_text(row[2], width - col - 1)
+        local own = #row[1] + 2 >= col
+        if own then cecho("<yellow>  " .. row[1] .. "<reset>\n") end
+        for i, l in ipairs(lines) do
+          if i == 1 and not own then
+            cecho(string.format("<yellow>  %s<reset>%s%s\n", row[1],
+                  string.rep(" ", col - 2 - #row[1]), l))
+          else
+            cecho(string.rep(" ", col) .. l .. "\n")
+          end
+        end
       end
     end
   end
   cecho("\n<cyan>ElrohirMapper " .. tostring(elro.VERSION) .. "<reset>  --  "
-        .. (adv and "diagnostics and tuning" or "everyday commands") .. "\n")
+        .. (adv and "advanced commands" or "everyday commands") .. "\n")
   -- two help systems, and a new player cannot tell which is which
-  cecho("<cyan>  These commands belong to this Mudlet package and are never sent to the game.\n"
-        .. "  The game's own side is 'help maplink' (switching the stream on and off).<reset>\n")
+  for _, l in ipairs(elro.wrap_text("These commands belong to this Mudlet package and are never "
+      .. "sent to the game. The game's own side is 'help maplink' (switching the stream on and "
+      .. "off).", width - 3)) do
+    cecho("<cyan>  " .. l .. "<reset>\n")
+  end
   emit(adv and HELP_ADV or HELP_BASIC)
   if not adv then
     local n = 0
     for _, row in ipairs(HELP_ADV) do if #row > 1 then n = n + 1 end end
-    cecho(string.format("\n<cyan>  maphelp advanced<reset>  -- %d diagnostic and tuning command(s)\n", n))
+    cecho("\n")
+    emit({ { "maphelp advanced", string.format(
+      "%d more: shaping the map by hand, mazes, diagnostics, tuning", n) } })
   end
   cecho("\n")
 end
@@ -5183,7 +5409,7 @@ end
 -- search room names and area names; print matching rooms with IDs
 function elro.search_rooms(pat)
   if not pat or pat == "" then
-    cecho("\n<red>[elro]: mapsearch <pattern>\n<reset>") return
+    cecho("\n<red>[elro]: mapsearch <text>, e.g. 'mapsearch church'\n<reset>") return
   end
   local lpat = pat:lower()
   local nm = elro.cs_areas_swap()

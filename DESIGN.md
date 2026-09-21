@@ -29,6 +29,7 @@ module never needs a package reinstall. Offline harnesses loop over the same lis
 | `render.lua` | overlays (demoted, residual, stubs), the `mapstep` replay, diagnostic commands |
 | `vert.lua` | up/down exits: classification, docking floors, bridge pistons, drawing |
 | `window.lua` | `mapwin`: the map as a small resizable window inside the session |
+| `export.lua` | `mapexport`: one map as an A4 SVG made for paper |
 
 Every module binds what it needs from earlier ones into file-scope locals at load
 (`elro.g`, `elro.k`, `elro.exits`, `elro.clk`, `elro.TUNE`, `elro.area_adjacency`) and fails
@@ -331,6 +332,48 @@ the one definition of "this drawing tells the truth about this exit", shared by 
 `mapstep` replays a relayout frame by frame from the snapshots `step_snap` records under
 `stepDebug`; each frame carries the closure trace and the lever options that were ranked, in the
 same colours as the collision dump.
+
+### Printing a map (export.lua)
+
+`mapexport [area] [a4] [plain]` writes one map as an SVG into `<profile>/elro_export/`, which
+any browser opens and prints. Mudlet's mapper has no print or image export, and a screenshot of a
+dark, colour-coded screen is the wrong thing to put on paper, so the page is designed for
+paper and is not a copy of the screen:
+
+* White page, rooms as outlined boxes, thin dark connections. Terrain is a pale tint (the
+  terrain colour let down 62% towards white), which costs little ink and is still a grey on a
+  mono printer; `plain` leaves it out.
+* Line STYLE carries what colour carries on screen, since colour does not survive a greyscale
+  printer: dashed for a one-way exit, a dotted stub for an exit onto another map, a triangle
+  for up or down.
+* The second terrain's dot sits in a corner of the box, not the middle as on screen: the
+  middle is where the room's number goes.
+* The page is declared in millimetres as A4. Both orientations are tried and the one giving
+  the bigger cell wins; a cell is capped at 11 mm so a small area is not blown up.
+* Names never fit in a box, so rooms are numbered and listed under the map, with where an
+  exit off the map leads. A small area (80 rooms or fewer) numbers every room; a larger one
+  only the rooms worth finding on paper: healers, shops, transport, holy ground, typed exits
+  and ways off the map. The list may take 40% of the page at most and says how many were
+  left out; below a 3 mm box numbers are unreadable and are dropped, with a note.
+* Numbers run as the page is read, top row first and left to right, not by room id: a
+  number from the list is found by where it must be. Number 1 is the exception and is the
+  door: the first room with an exit to the world map, else the first with any way off this
+  map. A reader starts from where they walk in.
+* One sheet. Tiling a large map over several is a later step; the command says so when the
+  rooms come out under 2 mm. The footer says which rooms were numbered when not all were.
+* A room takes 0.72 of its cell. At 0.56 the gaps were nearly as wide as the rooms and the
+  map sprawled; the free cell went from 12 to 9.5 units so that the ROOM kept its size and
+  only the gap halved. Half a cell is left clear all round the map, where the stubs end.
+* **The default is not the sheet.** Bare `mapexport` is the same drawing with no paper to
+  fit, for a screen or a wiki: a fixed 9.5 unit cell (38 pixels), an image as big as the map
+  needs, every room numbered and the whole list under it, sized in pixels instead of
+  millimetres. The one-sheet page is the `a4` option (file `<area>_a4.svg`). It began the
+  other way round; the one-sheet rules (notable rooms only, a list capped at 40%) are paper's
+  limits, read as arbitrary to the first person who tried it, and most exports are looked at,
+  not printed.
+
+It reads the map through the c-space snapshot and writes nothing back. `elro.exits` walks the
+eight compass keys only, so up and down are read from the record directly.
 
 ### The map window (window.lua)
 

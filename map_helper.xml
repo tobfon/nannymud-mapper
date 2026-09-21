@@ -265,6 +265,41 @@ else say("walk watchdog: " .. (elro.walkWatchdog == false and "off" or tostring(
 				<regex>^mapvert(?:\s+(.+))?$</regex>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
+				<name>mapexport</name>
+				<script>elro.cmd_export(matches[2])</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapexport(?:\s+(.+))?$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapavoid</name>
+				<script>elro.cmd_avoid(matches[2], true)</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapavoid(?:\s+(.+))?$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapunavoid</name>
+				<script>elro.cmd_avoid(matches[2], false)</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapunavoid(?:\s+(.+))?$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapavoids</name>
+				<script>elro.cmd_avoid()</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapavoids$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>maplegend</name>
+				<script>elro.map_legend()</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^maplegend$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
 				<name>mapwin</name>
 				<script>elro.mapwin(matches[2])</script>
 				<command></command>
