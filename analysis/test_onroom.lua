@@ -129,6 +129,46 @@ eq(roomExists(91), true, "walking in again recreates the room")
 eq(getRoomExits(90)["east"], 91, "...and the edge INTO it is written, not skipped")
 eq(getRoomExits(91)["west"], 90, "...with the advertised reverse edge as well")
 
+-- ---- a loop closed by WALKING between two placed rooms -----------------------
+-- The closing edge is the one walked, so it is the edge the urgency check must judge; as
+-- `skip` it used to be the one edge never looked at. Asserted through markDirty's argument.
+local function closure(x4, y4)
+  reset_map()
+  local a = addAreaName("gurk")
+  for id, c in pairs({ [1] = { 10, 10 }, [2] = { 11, 10 }, [3] = { 11, 11 }, [4] = { x4, y4 } }) do
+    addRoom(id) ; setRoomArea(id, a) ; setRoomCoordinates(id, c[1], c[2], 0)
+    setRoomUserData(id, "sarea", "gurk")
+  end
+  setExit(1, 2, "east") ; setExit(2, 1, "west") ; setExit(2, 3, "north") ; setExit(3, 2, "south")
+  setExit(3, 4, "west") ; setExit(4, 3, "east")
+  elro.cs_reset() ; elro.dirty = {}
+  local urgent
+  local realMD, realAF = elro.markDirty, elro.autoflush
+  elro.markDirty = function(_, u) urgent = u and true or false end
+  elro.autoflush = true
+  elro.onRoom(1, 4, "south", "the start", "gurk", "east,north", "")
+  elro.markDirty, elro.autoflush = realMD, realAF
+  return urgent
+end
+eq(closure(10, 11), false, "a walked closure that is truthful is NOT urgent")
+eq(closure(12, 11), true, "a walked closure that lies makes the relayout urgent")
+
+-- ---- a new room with NO edge (login, teleport) --------------------------------
+-- It gets no guess and stays at addRoom's (0,0), where a laid-out area has a room.
+reset_map()
+local a7 = addAreaName("gurk")
+addRoom(1) ; setRoomArea(1, a7) ; setRoomCoordinates(1, 0, 0, 0) ; setRoomUserData(1, "sarea", "gurk")
+elro.cs_reset() ; elro.dirty = {}
+do
+  local urgent
+  local realMD, realAF = elro.markDirty, elro.autoflush
+  elro.markDirty = function(_, u) urgent = u and true or false end
+  elro.autoflush = true
+  elro.onRoom(2, 0, "none", "somewhere else", "gurk", "east", "")
+  elro.markDirty, elro.autoflush = realMD, realAF
+  eq(urgent, true, "a new room that arrived with no edge makes the relayout urgent")
+end
+
 cecho = realcecho
 print(string.format("test_onroom: %d check(s), %d failure(s)", checks, fail))
 os.exit(fail == 0 and 0 or 1)

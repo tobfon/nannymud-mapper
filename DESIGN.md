@@ -201,6 +201,31 @@ between the resume and a tick. `elro._noYield` marks the windows where a `pcall`
 (the provers), turning ticks inside them into no-ops. Diagnostic timers read `elro.clk`, which
 subtracts the driver's idle time so a bracket that straddled a yield is not charged the frame gap.
 
+### When a relayout is urgent (core, `guess_inconsistent`)
+
+Every graph change queues a relayout after `autoIdle`; urgency only skips that wait. It is
+urgent when the unit-step guess lands on a room, and when the step shows the drawing is wrong:
+an edge that lies, an edge running over a third room, or the new room landing on somebody
+else's edge. The edge a new room is PLACED on is truthful by construction, so it is skipped.
+
+A room created by `onRoom` has no other edge, because exits are recorded only when walked.
+So live, a loop closes when the player WALKS between two rooms that are both already placed,
+and the closing edge is the walked one. Passing it as `skip` meant the closure was the one
+edge never judged, and a lying closure sat on screen for the whole debounce, or for as long
+as the player kept moving. For a walk between placed rooms only that edge is judged, from its
+source (the forward exit always exists; the reverse may not be advertised). The rest of the
+room's edges and the on-edge scan are left out: nothing moved, and re-reporting a lie the
+solver chose to keep would make every new edge at that room urgent.
+
+A new room that arrives with no edge at all (login, a teleport, `from=0`) gets no guess and
+stays at `addRoom`'s (0,0), which is where a relayout normalises an area to, so it counts as a
+collision, as a new room behind a special exit already did.
+
+Not urgent, on purpose or not yet: a walked closure that only CROSSES another edge (often
+forced, and the lowest severity), and a walked up/down between placed rooms (no compass
+geometry to judge; `vertPack` decides it in the relayout). Urgency requested while a build is
+in flight is not lost: `relayout_done` is level-triggered and rebuilds at once.
+
 ### Regionalisation (core)
 
 A server area keeps its own Mudlet tab only if its largest internally connected cluster has at
@@ -338,7 +363,7 @@ supplies resizing, the lock styles and the save file.
   one, so with no save file the window opens at load (or a second after a mid-session install,
   which gets no `sysLoadEvent`) and says how to close it. After that the container's save file
   is the only record: the window comes back only if the file does not say hidden, so a player
-  who closed it is not shown it again. Cost: that first open closes a docked Mudlet map.
+  who closed it is not shown it again.
 * **Mudlet's `generic_mapper` stays installed.** It answers `mapOpenEvent` by sending `look` and
   printing its quick-start three seconds later. Other scripts a player runs may depend on it, so
   it is not uninstalled, and its saved state is not touched. Its handlers are registered by name
@@ -349,13 +374,35 @@ supplies resizing, the lock styles and the save file.
   there hides the start of every line; `mapwin left` exists for a player whose right corner
   is taken by another overlay. The side is not stored: a box saved with its left edge at the
   console's left edge is a left box when it is rebuilt.
+* **OPEN: the neighbouring pane goes black (Mudlet 5.0.1, Windows, MultiView).** With a map
+  window open in the FIRST session, alt-tabbing away and back blanks the second session's text
+  until it is clicked; only lines that arrive afterwards are drawn. Never seen without a map
+  window, and not caused by overlap (it happens with `mapwin left`). The last and best lead
+  before the hunt was parked on 2026-09-20: it could not be produced with the window unlocked
+  or locked by `mapwin lock` (style "full"), and appeared at once after locking from the
+  container's RIGHT-CLICK menu (style "standard", whose inner area overhangs the box by a few
+  pixels). Earlier observations that pointed elsewhere were made without knowing the lock
+  state and should not be trusted. Not separated: the "standard" style against the use of the
+  right-click menu itself (`lua elro.miniBox:lockContainer("standard")` with no menu, then
+  "full" plus opening and dismissing the menu). The repaint happens in a session this code is
+  not running in, so nothing here tries to repair it.
 * **The banner.** Mudlet's "Short" map info (name / id (area)) fills a 380 pixel map, and
   neither its font nor its background can be set from Lua (the background is the preference
   behind `setMapInfoBgColor`, translucent by default, which is why rooms show through it). The
   module registers a "Room name" info and, on the first ever open and on `mapwin reset`, turns
   Short and Full off and that one on. Only then: the choice is the player's afterwards, in the
   map's right-click menu.
-* **One mapper per profile.** Building the window closes a docked or floating map first.
+* **`createMapper` can refuse without an error.** Mudlet's binary carries "cannot create
+  mapper. Do you already use a map window?" (and the reverse for the dock); the call returns
+  nil and the message, nothing throws, and Geyser does not look, which would leave the frame
+  with nothing in it. That was 1.2.0's black window on a tester's Mac (5.0.1): he used the
+  docked Map, a bare `createMapper(0, 0, 300, 300)` printed that message, no error showed
+  anywhere, and after a Mudlet restart the window worked. 1.2.0's `closeMapWidget` before
+  building had not prevented it. The exact condition is still not known: on Windows 5.0.1 a
+  session that had used the Map button got a working window. `can_embed()` asks with a
+  zero-size `createMapper` before anything is built; on a refusal the automatic open does
+  nothing and leaves the docked Map alone, and a typed `mapwin` prints Mudlet's reason and
+  the restart that changes over.
  that are easy to break
 
 - **Key text is a layout contract.** `keys.lua`'s formats are index keys, trace labels and the

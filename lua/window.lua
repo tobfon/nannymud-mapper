@@ -107,10 +107,22 @@ local function saved_left()
   return x ~= nil and x <= l
 end
 
+-- createMapper can refuse by returning nil and a message, without throwing, and Geyser does
+-- not look. Asked at zero size before anything is built; returns Mudlet's reason on a refusal.
+local function can_embed()
+  local made, why = false, nil
+  quietly(function()
+    local ok, res, msg = pcall(createMapper, 0, 0, 0, 0)
+    made = (ok and res == true) or (type(raiseWindow) == "function" and raiseWindow("mapper") == true)
+    if not made then why = tostring((ok and msg) or res or "no reason given") end
+  end)
+  return made, why
+end
+
 local function build()
+  if not can_embed() then return false end
   elro.miniLeft = saved_left()
   quietly(function()
-    if type(closeMapWidget) == "function" then pcall(closeMapWidget) end
     elro.miniBox = Adjustable.Container:new({
       name = BOX, titleText = "Map", padding = 4,
       x = 0, y = 0, width = DEFAULT_W, height = DEFAULT_H,
@@ -120,6 +132,7 @@ local function build()
       name = MAPPER, x = 0, y = 0, width = "100%", height = "100%",
     }, elro.miniBox)
   end)
+  return true
 end
 
 -- Mudlet's own banner (name / id (area)) fills a small map, and its font cannot be set.
@@ -142,12 +155,24 @@ local function show()
   elro.miniBox:show()
   anchor()
   watch()
-  if elro.current and type(centerview) == "function" then pcall(centerview, elro.current) end
+  -- The container is a black label under the map; nothing guarantees the map stacks above it.
+  if elro.miniMap and type(raiseWindow) == "function" then pcall(raiseWindow, "mapper") end
+  -- view_room, not elro.current: off the map the view belongs on the placeholder. At load
+  -- no room has arrived yet, and Mudlet's own last position is the next best thing.
+  local at = elro.view_room() or (type(getPlayerRoom) == "function" and getPlayerRoom()) or nil
+  if at and type(centerview) == "function" then pcall(centerview, at) end
 end
 
 function elro.mapwin(arg)
   if type(Adjustable) ~= "table" or type(Geyser) ~= "table" or not Geyser.Mapper then
     cecho("\n<red>[elro]: this Mudlet is too old for mapwin (needs 4.8).\n<reset>") return
+  end
+  local can, why = can_embed()
+  if not can then
+    if elro.miniBox then elro.miniBox:hide() end
+    cecho("\n<red>[elro]: Mudlet would not put the map in a window (" .. why .. "). Its own Map "
+      .. "button still works. To change over: close that Map, restart Mudlet, type 'mapwin'.\n<reset>")
+    return
   end
   local fresh = not elro.miniBox
   local first = type(io.exists) == "function" and not io.exists(save_path())
@@ -192,7 +217,7 @@ function elro.mapwin_boot()
   if elro.miniBox or type(Adjustable) ~= "table" or type(getMudletHomeDir) ~= "function" then return end
   local first = type(io.exists) == "function" and not io.exists(save_path())
   if not first and not was_open() then return end
-  build()
+  if not build() then return end
   if first then compact_banner() end
   show()
   if first then
@@ -205,7 +230,11 @@ end
 -- A reload or reinstall keeps the window (elro survives) but not this module's timer chain.
 if elro._winWatch and type(killTimer) == "function" then pcall(killTimer, elro._winWatch) end
 elro._winWatch = nil
-if elro.miniBox then watch() end
+-- 1.2.0 could leave an empty frame behind; the zero-size probe also needs the map put back.
+if elro.miniBox and type(createMapper) == "function" then
+  if not can_embed() then elro.miniBox:hide()
+  elseif not (elro.miniBox.hidden or elro.miniBox.auto_hidden) then show() end
+end
 -- An install in mid-session gets no sysLoadEvent; boot does nothing the second time.
 if type(tempTimer) == "function" then tempTimer(1, function() elro.mapwin_boot() end) end
 

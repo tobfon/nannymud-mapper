@@ -100,5 +100,32 @@ link(3, 4, "south", "north")
 elro.cs_reset()
 eq(elro.guess_inconsistent(4, aid, 3), nil, "a room beside the edge does not trigger")
 
+-- 9. THE WALKED CLOSURE. A room placed by onRoom has only its placement edge, so live a loop
+-- closes when you WALK between two rooms that are both already placed. That edge is the
+-- closure, and as `skip` it was the one edge never judged. `only` judges it, from its source.
+fresh()
+room(1, 0, 0) ; room(2, 1, 0) ; room(3, 1, 1) ; room(4, 2, 1)   -- 4 drifted: it is not above 1
+link(1, 2, "east", "west") ; link(2, 3, "north", "south") ; link(3, 4, "west", "east")
+link(4, 1, "south")                     -- walked 4 -south-> 1, but 1 is not south of 4
+elro.cs_reset()
+eq(elro.guess_inconsistent(4, aid, nil, 1), "lie", "a walked closure that lies triggers")
+
+-- 10. ...a truthful walked closure does not,
+fresh()
+room(1, 0, 0) ; room(2, 1, 0) ; room(3, 1, 1) ; room(4, 0, 1)
+link(1, 2, "east", "west") ; link(2, 3, "north", "south") ; link(3, 4, "west", "east")
+link(4, 1, "south")
+elro.cs_reset()
+eq(elro.guess_inconsistent(4, aid, nil, 1), nil, "a truthful walked closure does NOT trigger")
+
+-- 11. ...and an old lie on ANOTHER edge of the same room is not re-reported by a clean walk:
+-- an accepted lie would otherwise make every new edge at that room an urgent relayout.
+fresh()
+room(1, 0, 0) ; room(2, 1, 0) ; room(3, 5, 5)
+link(1, 3, "north")                     -- 3 is nowhere near north of 1: a standing lie
+link(1, 2, "east")                      -- the edge just walked, truthful
+elro.cs_reset()
+eq(elro.guess_inconsistent(1, aid, nil, 2), nil, "`only` ignores the room's other edges")
+
 print(string.format("test_guesscheck: %d check(s), %d failure(s)", checks, fail))
 os.exit(fail == 0 and 0 or 1)

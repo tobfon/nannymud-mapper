@@ -31,8 +31,17 @@ under Toolbox → Package Manager first, then install the new one.
 **The map window.** The first time the package loads it opens the map as a small window over
 the top right corner of the text. Drag its inner or bottom edge to resize it; the size is
 remembered. `mapwin` closes it and opens it again, `mapwin left` moves it to the other corner,
-`mapwin lock` removes its frame. Mudlet's own **Map** button still works if you would rather
-have the map docked; Mudlet shows one map per profile, so close this one with `mapwin` first.
+`mapwin lock` removes its frame.
+
+Mudlet's own **Map** button still works if you would rather have the map docked. Mudlet may
+refuse to show the map in one of the two while the other has been in use; `mapwin` says so
+when it happens. To change over, close the one you have, restart Mudlet, then type `mapwin`
+or click **Map**.
+
+Known issue, seen on Mudlet 5.0.1 with two sessions side by side in MultiView: after switching
+to another program and back, the text of the session you are not in can go black. Nothing is
+lost; click into that session and it redraws. It has only been seen after locking the map window
+from its right-click menu; `mapwin lock` does the same job and has not caused it.
 
 **2. Switch the stream on, in game.** The server sends the events only to players who asked
 for them, because without this package they are a line of text on every move:

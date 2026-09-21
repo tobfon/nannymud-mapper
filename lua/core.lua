@@ -9,7 +9,7 @@ elro.dirty = elro.dirty or {}     -- areaID -> true: needs relayout
 elro.ns_cap = elro.ns_cap or 5000  -- max rooms for the O(V^2 E) NS engine; above -> flood
 -- Reported to the server by the handshake in onRoom. Kept in step with config.lua's
 -- `version` by tools/build-package.sh, which refuses to build if the two differ.
-elro.VERSION = "1.2.0"
+elro.VERSION = "1.2.1"
 
 elro.relayout_timer = elro.relayout_timer or nil
 -- min internally-connected cluster size for a server-area to keep its own tab;
@@ -3460,12 +3460,15 @@ if type(getRooms) == "function" and next(getRooms() or {}) then elro.terrain_boo
 -- worth checking are the ones the room turned out to ALSO have -- the loop closures, which are
 -- right only by luck. Adds no relayout (one was queued by the graph change); only makes it
 -- urgent. edge_truthful is the defect scanner's own predicate, so this cannot drift from it.
-function elro.guess_inconsistent(id, aid, skip)
+-- `only`: judge just the edge id -> only, for an edge walked between two rooms that were both
+-- already placed. Nothing moved, so the rest of the room's edges and the on-edge scan are skipped.
+function elro.guess_inconsistent(id, aid, skip, only)
   if elro.guessCheck == false then return nil end
   local rec = elro.cs_room(id) ; if not rec then return nil end
+  if only and getRoomArea(id) ~= aid then return nil end
   local px, py = getRoomCoordinates(id) ; if not px then return nil end
   for d, x in elro.exits(rec.ex) do
-    if x ~= skip and x ~= id and roomExists(x) and getRoomArea(x) == aid then
+    if x ~= skip and (not only or x == only) and x ~= id and roomExists(x) and getRoomArea(x) == aid then
       local de = elro.delta[d]
       if de and (de[1] ~= 0 or de[2] ~= 0) then
         local qx, qy = getRoomCoordinates(x)
@@ -3492,7 +3495,7 @@ function elro.guess_inconsistent(id, aid, skip)
   -- over-room checks and drops only this scan. Diagnostic: fold it out once the answer is known,
   -- and the real fix is an edge-by-cell index rather than a re-scan (eqw.edge_index already
   -- builds exactly that shape for the solver).
-  if elro.guessOnEdge == false then return nil end
+  if only or elro.guessOnEdge == false then return nil end
   for _, r in ipairs(elro.cs_area_rooms(aid)) do
     local rr = r ~= id and elro.cs_room(r) or nil
     local ax, ay
@@ -4455,6 +4458,10 @@ function elro.onRoom(id, fromId, dir, name, area, exits, terr, mha, mh)
       -- the glyph belongs to the room we just left
       elro.glyph_room(fromId)
     end
+  elseif isNew then
+    -- No edge at all (login, a teleport, from=0): no guess either. The room sits at addRoom's
+    -- (0,0), which a relayout normalises TO, so it is usually on top of another room.
+    collided = true
   end
   -- finalize an in-progress maprecordmove, but only if this move is the one
   -- that was armed; a move the mapper never saw (move_object) leaves
@@ -4516,12 +4523,21 @@ function elro.onRoom(id, fromId, dir, name, area, exits, terr, mha, mh)
       local urgent = collided
       if not urgent then
         -- ...and the closures: an edge this room turned out to have that we did not place it on
+        -- A room placed by this call has only its placement edge. A walk between two rooms
+        -- that were already placed IS the closure, so that one edge is judged, from its source.
         local _pf = pf("guess")
-        local why, wd, wx = elro.guess_inconsistent(id, effAid, fromId)
+        local why, wd, wx
+        local src = id
+        if isNew or not fromId or fromId == 0 then
+          why, wd, wx = elro.guess_inconsistent(id, effAid, fromId)
+        else
+          src = fromId
+          why, wd, wx = elro.guess_inconsistent(fromId, effAid, nil, id)
+        end
         _pf()
         if why then
           urgent = true
-          elro.tr(string.format("onRoom: %s on %d -%s-> %s -- relayout now", why, id,
+          elro.tr(string.format("onRoom: %s on %d -%s-> %s -- relayout now", why, src,
                                 tostring(wd), tostring(wx)))
         end
       end
