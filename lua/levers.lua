@@ -285,6 +285,9 @@ elro.classColours = {
   -- Teal, clear of every other line colour. Not an accusation: a vertical is a
   -- different KIND of edge, no compass direction; both its angles are one category.
   vertical = {   0, 210, 190 },   -- teal: up/down links (see draw_vertical)
+  -- A typed exit ("enter hut") between two rooms of one canvas: no direction, so the
+  -- line says only "these connect". Grey and dotted, unlike every line that is a claim.
+  special  = { 150, 150, 160 },   -- grey: recorded special exits (see draw_special)
 }
 
 

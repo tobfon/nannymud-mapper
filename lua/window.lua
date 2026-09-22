@@ -136,7 +136,7 @@ local function build()
 end
 
 -- Mudlet's own banner (name / id (area)) fills a small map, and its font cannot be set.
--- Swap it for the bare room name; the map's right-click menu still switches either.
+-- Swap it for name / id; the map's right-click menu still switches either.
 local INFO = "Room name"
 local function compact_banner()
   if type(enableMapInfo) ~= "function" or type(disableMapInfo) ~= "function" then return end
@@ -147,7 +147,9 @@ end
 
 if type(registerMapInfo) == "function" then
   pcall(registerMapInfo, INFO, function(room)
-    return (room and getRoomName(room)) or "", false, false, 255, 255, 255
+    -- the id too: it is what mapgoto and mapavoid take
+    return room and (tostring(getRoomName(room) or "") .. " / " .. tostring(room)) or "",
+           false, false, 255, 255, 255
   end)
 end
 

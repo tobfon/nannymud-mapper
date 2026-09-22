@@ -842,6 +842,45 @@ end
 
 -- Residual overlay: edges the engine KEPT but drew off-axis (red), and rooms buried under a
 -- stretched edge (yellow ring). See classColours.residual.
+-- Recorded special exits between two rooms of this canvas, as a dotted grey line. The letter
+-- glyph on the source stays; this adds where the exit goes. Cross-canvas ones remain a glyph
+-- alone: the other end is on another map. Drawn once per pair, so a two-way record makes one
+-- line. ⛔ addCustomLine's slot must be a compass direction or the exact command of a special
+-- exit the room HAS ("roomID 110 does not have an exit in a direction that can be identified
+-- from 'x99'"), so the line hangs off the recorded command, from the room that owns it.
+elro.specialMaxDraw = elro.specialMaxDraw or 12   -- cells; beyond this the line is clutter
+function elro.draw_special(coord)
+  if type(addCustomLine) ~= "function" or type(getRoomCoordinates) ~= "function" then return 0 end
+  if elro.smap == nil then elro.load_smap() end
+  local col = (elro.classColours and elro.classColours.special) or { 150, 150, 160 }
+  local seen, n, far = {}, 0, 0
+  local keys = {}
+  for k in pairs(elro.smap or {}) do keys[#keys + 1] = k end
+  table.sort(keys)                       -- the same end draws each time
+  for _, k in ipairs(keys) do
+    local a, b = string.match(k, "^(%d+):(%d+)$")
+    a, b = tonumber(a), tonumber(b)
+    if a and b and a ~= b and coord[a] and coord[b] then
+      local key = math.min(a, b) .. ":" .. math.max(a, b)
+      if not seen[key] and roomExists(a) and roomExists(b) then
+        local ax, ay = getRoomCoordinates(a)
+        local bx, by = getRoomCoordinates(b)
+        if ax and bx and (ax ~= bx or ay ~= by) then
+          if math.max(math.abs(ax - bx), math.abs(ay - by)) <= elro.specialMaxDraw then
+            -- the destination ROOM, not points: Mudlet ends the line on the room itself
+            local ok, res = pcall(addCustomLine, a, b, elro.smap[k], "dot line", col, false)
+            if ok and res ~= nil and res ~= false then seen[key] = true ; n = n + 1 end
+          else
+            seen[key] = true ; far = far + 1
+          end
+        end
+      end
+    end
+  end
+  elro._specialStats = { drawn = n, far = far }
+  return n
+end
+
 function elro.draw_residual(coord)
   if type(addCustomLine) ~= "function" or type(getRoomCoordinates) ~= "function"
      or type(getRoomExits) ~= "function" then return end

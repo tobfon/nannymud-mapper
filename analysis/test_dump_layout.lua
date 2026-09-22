@@ -222,11 +222,35 @@ local function run(spec)
   elro.engine, elro.engineCache, elro.engineSpace = {}, {}, {}
   elro.bgLayout = false
   if os.getenv("SHWATCH") then elro._shWatch = {} ; for k in os.getenv("SHWATCH"):gmatch("[^,]+") do elro._shWatch[k] = true end end
+  -- SMAP="110:6485=enter hut,9:8=enter" -- recorded typed exits, which the dumps do not carry;
+  -- the special-exit dock (special.lua) runs only on these.
+  if os.getenv("SMAP") then
+    for kv in os.getenv("SMAP"):gmatch("[^,]+") do
+      local k, v = kv:match("^(%d+:%d+)=(.+)$")
+      if k then elro.smap[k] = v end
+    end
+    elro.smap_index_dirty()
+  end
   elro.recompute_areas()
   for n in pairs(getAreaTable()) do elro.engine[n] = "eqw" end
   for _, aid in pairs(getAreaTable()) do elro.dirty[aid] = true end
   local t0 = os.clock()
+  elro._specialDock = nil
+  elro._wantGroups = os.getenv("SHOWGROUPS") ~= nil
+  elro._lastGroups, elro._lastGroupsN = nil, nil
   elro.flush_dirty()
+  if elro._specialDock then
+    local s = elro._specialDock
+    print(("   special dock: %d pair(s) across groups, %d docked, %d declined; groups %d -> %d"):format(
+      s.pairs, s.docked, s.declined, s.before, s.after))
+  end
+  -- SHOWGROUPS=1 -- name the groups (not GROUPS: that is a read-only bash variable and never reaches luajit) the shelf pack was handed (to pick two rooms for SMAP=)
+  if os.getenv("SHOWGROUPS") and elro._lastGroups then
+    for gi, ids in ipairs(elro._lastGroups) do
+      print(("   group %d: %d room(s): %s%s"):format(gi, #ids,
+        table.concat(ids, ",", 1, math.min(#ids, 6)), #ids > 6 and ",..." or ""))
+    end
+  end
   if os.getenv("RDN") then
     print(("   ringDilate: rings=%s builds=%s emitted=%s | clash=%s void=%s class-locked=%s comp2=%s"):format(
       tostring(elro._rdRing or 0), tostring(elro._rdNorm or 0), tostring(elro._rdOut or 0),

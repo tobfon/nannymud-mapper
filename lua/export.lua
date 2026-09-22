@@ -75,11 +75,13 @@ end
 
 -- The up/down links the screen draws are custom lines the mapper stored on the rooms, in its
 -- vertical colour; read back, so paper shows the same links, bends included. Returns a list
--- of point lists in map coordinates, each starting at its room.
-function elro.export_verticals(rooms)
+-- of point lists in map coordinates, each starting at its room. `which` picks the colour:
+-- "vertical" (default) or "special", the typed-exit lines.
+function elro.export_verticals(rooms, which)
   local out = {}
   if type(getCustomLines) ~= "function" then return out end
-  local want = (elro.classColours and elro.classColours.vertical) or { 0, 210, 190 }
+  local dflt = which == "special" and { 150, 150, 160 } or { 0, 210, 190 }
+  local want = (elro.classColours and elro.classColours[which or "vertical"]) or dflt
   for _, r in ipairs(rooms) do
     local ok, lines = pcall(getCustomLines, r.id)
     for _, ln in pairs(ok and type(lines) == "table" and lines or {}) do
@@ -248,6 +250,16 @@ function elro.export_svg(aid, plain, free)
     w('<polyline points="%s" stroke-width="%.2f" stroke-dasharray="%.2f %.2f %.2f %.2f"/>\n',
       table.concat(s, " "), thin * 1.4, thin * 6, thin * 2.5, thin, thin * 2.5)
   end
+  -- typed exits between two rooms here: grey and dotted, as on screen
+  for _, pts in ipairs(elro.export_verticals(rooms, "special")) do
+    local s = {}
+    for _, p in ipairs(pts) do
+      s[#s + 1] = string.format("%.2f,%.2f", ox + (p[1] - minx + 0.5) * cell,
+                                oy + (maxy - p[2] + 0.5) * cell)
+    end
+    w('<polyline points="%s" stroke="#777777" stroke-width="%.2f" stroke-dasharray="%.2f %.2f"/>\n',
+      table.concat(s, " "), thin * 1.2, thin * 1.2, thin * 2.4)
+  end
   w('</g>\n')
 
   for _, r in ipairs(rooms) do
@@ -327,7 +339,7 @@ function elro.export_svg(aid, plain, free)
   -- two lines: together they are wider than a portrait page
   w('<text x="%d" y="%.1f" font-size="2.2" fill="#444444">%s</text>\n', MARGIN, ph - MARGIN + 0.5,
     esc("Dashed: a one-way exit. Dotted stub: leads to another map. Triangle and dash-dot line: "
-        .. "up or down. Italic letter: an exit you type."))
+        .. "up or down. Italic letter: an exit you type; a dotted grey line is where it goes."))
   if note then
     w('<text x="%d" y="%.1f" font-size="2.2" fill="#444444">%s</text>\n', MARGIN, ph - MARGIN + 3.5,
       esc(note))

@@ -28,6 +28,7 @@ module never needs a package reinstall. Offline harnesses loop over the same lis
 | `walk.lua` | `walk_branches`: the room-by-room walk that drives placement; `layout_eqw`, the live entry |
 | `render.lua` | overlays (demoted, residual, stubs), the `mapstep` replay, diagnostic commands |
 | `vert.lua` | up/down exits: classification, docking floors, bridge pistons, drawing |
+| `special.lua` | typed-exit docking: groups a recorded special exit joins are placed beside each other, after the verticals |
 | `window.lua` | `mapwin`: the map as a small resizable window inside the session |
 | `export.lua` | `mapexport`: one map as an A4 SVG made for paper |
 
@@ -321,6 +322,64 @@ spanning forest over (components, vertical links): the first link joining two co
 honoured, later ones are drawn only. A bridge piston may stretch one Tarjan bridge after docking
 so a near-miss link draws straight; it is gated on no defect kind getting worse.
 
+### Typed exits between rooms of one canvas (render.draw_special)
+
+A recorded special exit (`enter hut`) never enters the layout graph: its source gets a letter
+glyph and Mudlet's own special exit routes speedwalks through it, and that was all the map
+said. Since 2026-09-22 the pair is also joined by a dotted grey line (`classColours.special`,
+slot `x<to>`) when both rooms are on the canvas and within `specialMaxDraw` (12) cells; further
+apart the line would be clutter and is only counted. Grey and dotted on purpose: every other
+line colour is a claim about direction or trust, and this one says only "these connect". It
+is drawn from the recorded-command store (`elro.smap`), once per pair. Cross-canvas pairs stay
+a glyph alone. ⛔ `addCustomLine`'s slot must be a compass direction or the exact command of a
+special exit the room HAS, and the destination is given as a room id so Mudlet ends the line
+on the room; an invented slot is refused with a message that `pcall` swallows, and the pass
+counted four lines drawn while none showed. The store and Mudlet's special exit hold the same
+string, so the recorded command is the slot.
+
+**A command that ends in a direction is geometry (`elro.cmd_dir`, knob `cmdDirHint`).** In
+one area the path is walked with `tread n`, `tread e`; a bare `n` works but drops
+the player off the path. Those arrive as typed commands, so the rooms were placed as
+unconnected and, since the docking, as a dotted chain in a ring. The command says where it
+goes: `area_adjacency` gives the layout graph a compass edge, both darts, for every recorded
+command whose LAST word is a direction, where the source's slot is free (a real exit in the
+slot wins; "north tunnel" does not count; `climb up` is left to the vertical packer). Layout
+only: no exit is written, so a speedwalk still sends `tread n`, `draw_special` still draws
+the dotted line (now straight and one cell long), and the `n` stub stays, since whether it
+should go is undecided. A hinted pair is one component afterwards, so the dock never sees it.
+Corpus A/B: the hinted room lands one cell north of its anchor, census unchanged.
+The same rule on the vertical side (`elro.cmd_vert`): a recorded command ending in `up` or
+`down` ("climb up") is one more dart for `vert_classify`, where the room has no real exit in
+that direction, marked `typed`. The packer docks it like any vertical link; `draw_vertical`
+skips a typed link and leaves the drawing to `draw_special`'s grey dotted line, because the
+exit is typed and the line must say so (the user's ask). The two parsers never overlap:
+`cmd_dir` returns nil for up/down and `cmd_vert` nil for planar words. On a corpus area an injected
+`climb up` into the staircase group classified as `cycle` (draw-only), since that group
+already had a real vertical into it; a typed link never outranks a real one.
+
+**Docking (special.lua, `elro.special_assemble`, knob `specialDock`).** After `vert_assemble`
+has docked the up/down-linked components, the groups it returns are handed to a second pass
+that docks the two groups a recorded typed exit joins: the smaller group moves so that its
+exit room sits at the nearest free offset from the anchor room, tried in rings 3 to 6.
+Verticals go first because a vertical is geometry (up is a direction, the 1:2 offset encodes
+it) and a typed exit has none; a pair already in one group after the vertical pass needs
+only the line. No offset in the table is a compass direction, a 45, or the 1:2 of a vertical,
+so the placement claims no direction either. Fit is `vert_fit`'s test (no cell overlap, no
+room on an edge, no edge on a room) PLUS a clear run: the dotted line is drawn straight from
+the anchor to the exit room, so that segment may pass through no room and cross no placed
+edge, else the group lands "near" and the line still cuts across geometry (the first version
+did exactly that). Among the slots of the nearest ring that pass, the most open one wins (free
+cells in the 5x5 around the landing), so a group goes to the anchor's open side rather than
+into the first hole. ⛔ `G.seg` rasterises only axis and 45 runs and every offset here is
+neither, so the run is sampled four times per cell as `vert_foot` does. A room boxed in on
+every side has no clear line and its typed exit is declined, which is right: nothing can be
+drawn to it truthfully. Nothing fits, the pair is declined
+and both groups go to the shelf pack as before, so the pass can only make the drawing
+tighter, never worse. Verified offline on a corpus area with `SMAP=` in the dump harness: four groups
+(3, 20, 14 and 7 rooms) docked around one anchor, the census unchanged (0 collisions, the same
+8 lies, 0 crossings), the box two columns narrower. Before the pass a relayout showed two
+thirds of one area's typed-exit pairs too far apart to draw (9 of 13).
+
 ## 8. Drawing (render.lua, canvas.write_compose)
 
 `write_compose` is the only path that writes coordinates. It normalises to the origin, writes
@@ -432,7 +491,7 @@ supplies resizing, the lock styles and the save file.
 * **The banner.** Mudlet's "Short" map info (name / id (area)) fills a 380 pixel map, and
   neither its font nor its background can be set from Lua (the background is the preference
   behind `setMapInfoBgColor`, translucent by default, which is why rooms show through it). The
-  module registers a "Room name" info and, on the first ever open and on `mapwin reset`, turns
+  module registers a "Room name" info (name / id, the id being what `mapgoto` and `mapavoid` take; the area is what the tab already says) and, on the first ever open and on `mapwin reset`, turns
   Short and Full off and that one on. Only then: the choice is the player's afterwards, in the
   map's right-click menu.
 * **`createMapper` can refuse without an error.** Mudlet's binary carries "cannot create

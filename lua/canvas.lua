@@ -483,6 +483,28 @@ local function area_adjacency(areaID, keepLoops)
       end
     end
   end
+  -- Typed commands that END in a direction ("tread n") carry the geometry a compass exit
+  -- would: the layout takes the edge, in that direction, where the source's slot is free.
+  -- Layout only: no exit is written, so a speedwalk still sends the recorded command and
+  -- draw_special still draws the dotted line, now straight and short. `~= false`: default on.
+  if elro.cmdDirHint ~= false and elro.cmd_dir then
+    if elro.smap == nil then elro.load_smap() end
+    local keys = {}
+    for k in pairs(elro.smap or {}) do keys[#keys + 1] = k end
+    table.sort(keys)                       -- first writer wins, deterministically
+    for _, k in ipairs(keys) do
+      local a, b = string.match(k, "^(%d+):(%d+)$")
+      a, b = tonumber(a), tonumber(b)
+      if a and b and a ~= b and inArea[a] and inArea[b] then
+        local d = elro.cmd_dir(elro.smap[k])
+        if d and adj[a][d] == nil then
+          adj[a][d] = b
+          local rv = elro.reverse[d]
+          if rv and adj[b][rv] == nil then adj[b][rv] = a end
+        end
+      end
+    end
+  end
   -- Copy the id list: callers table.sort it in place, and cs_area_rooms hands
   -- back the cached list itself.
   local out = {}
@@ -780,6 +802,7 @@ function elro.layout_area(areaID, allow_overflow)
   -- path draws these in write_compose, but the flood path (mapengine flood, and every
   -- maze submap) skipped them -- draw them here too so boundary exits show + colour.
   elro.draw_area_stubs(coord)
+  elro.draw_special(coord)
 end
 
 -- the overflow area: fragmented by nature; just flood whatever landed here
@@ -1549,6 +1572,16 @@ function elro.compose_spqr_adj(rooms, adj, space)
     groups = {}
     for ci = 1, #comps do groups[ci] = { coord = lcs[ci] } end
   end
+  -- after the verticals, at lower priority: a typed exit has no direction of its own
+  if elro.special_assemble then groups = elro.special_assemble(groups, adj) end
+  if elro._wantGroups then      -- the offline harness reads the group membership of the BIGGEST compose
+    local L, n = {}, 0
+    for _, g in ipairs(groups) do
+      local ids = {} ; for r in pairs(g.coord) do ids[#ids + 1] = r end
+      table.sort(ids) ; L[#L + 1] = ids ; n = n + #ids
+    end
+    if n >= (elro._lastGroupsN or 0) then elro._lastGroups, elro._lastGroupsN = L, n end
+  end
   for _, g in ipairs(groups) do
     -- bbox of the FULL group, then shelf-pack it
     local lc = g.coord
@@ -1801,6 +1834,7 @@ function elro.write_compose(coord)
   elro.draw_area_stubs(coord)   -- blue cross-area stubs (coords now live)
   elro.draw_demoted(coord)      -- magenta corridors for edges the equations dropped
   elro.draw_vertical_map(coord) -- ...and teal ones for the up/down links the pack honoured
+  elro.draw_special(coord)      -- ...and dotted grey for typed exits between two rooms here
   elro.draw_residual(coord)     -- ...and red for the ones it kept and drew off-axis
   -- last: terrain loses the highlight arbitration to occluded / maze
   elro.terrain_repaint(coord)

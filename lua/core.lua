@@ -9,7 +9,7 @@ elro.dirty = elro.dirty or {}     -- areaID -> true: needs relayout
 elro.ns_cap = elro.ns_cap or 5000  -- max rooms for the O(V^2 E) NS engine; above -> flood
 -- Reported to the server by the handshake in onRoom. Kept in step with config.lua's
 -- `version` by tools/build-package.sh, which refuses to build if the two differ.
-elro.VERSION = "1.3.0"
+elro.VERSION = "1.4.0"
 
 elro.relayout_timer = elro.relayout_timer or nil
 -- min internally-connected cluster size for a server-area to keep its own tab;
@@ -2606,6 +2606,12 @@ elro.KNOBS = {
                        -- edge over a room, and the queued relayout is made urgent if one is
                        -- found. Registered because it has no offline expression -- mapknobs is
                        -- the only way to see it is on. Fold once judged.
+  "cmdDirHint",        -- default ON. A recorded command ending in a direction ("tread n") is a
+                       -- compass edge for the LAYOUT where the source's slot is free; no exit
+                       -- is written and the stub stays. A/B: `SMAP=` in the dump harness.
+  "specialDock",       -- default ON. After the vertical pass, the two groups a recorded typed
+                       -- exit joins are docked beside each other when the smaller fits within
+                       -- a small ring (special.lua). A/B: `SMAP=` in the dump harness.
 }
 -- Probes: instruments, not behaviour. Listed separately from KNOBS but shown by
 -- `mapknobs` and cleared by `reset_knobs` all the same, since a probe left on can
@@ -2865,6 +2871,30 @@ elro.hook_verbs = { enter = true, exit = true, out = true, ["in"] = true }
 -- SEVERAL commands joined by SDELIM ("open gate" ;; "enter gate"); the LAST one
 -- is the step that actually moves you, so its verb is the one that counts --
 -- the leading commands are just the gate being opened.
+-- The compass direction a typed command carries, if its LAST word is one: "tread n" -> north,
+-- "swim east" -> east. A multi-step record (a;;b) is judged by its last step. Up and down are
+-- not returned: they are the vertical packer's, not the planar graph's. nil for "enter hut".
+function elro.cmd_dir(cmd)
+  if type(cmd) ~= "string" then return nil end
+  local last
+  for w in string.gmatch(string.lower(cmd), "%S+") do last = string.gsub(w, "%p+$", "") end
+  if not last then return nil end
+  local d = elro.expand[last] or last
+  local de = elro.delta[d]
+  if de and (de[1] ~= 0 or de[2] ~= 0) then return d end
+  return nil
+end
+
+-- The same for up/down: "climb up" -> up, for the vertical packer. nil for anything else.
+function elro.cmd_vert(cmd)
+  if type(cmd) ~= "string" then return nil end
+  local last
+  for w in string.gmatch(string.lower(cmd), "%S+") do last = string.gsub(w, "%p+$", "") end
+  local d = last and (elro.expand[last] or last)
+  if d == "up" or d == "down" then return d end
+  return nil
+end
+
 function elro.cmd_verb(cmd)
   if type(cmd) ~= "string" then return nil end
   local a = 1
@@ -3450,6 +3480,7 @@ function elro.map_legend()
   line(cc.demoted  or { 255, 60, 220 }, "an exit the mapper does not believe: the two rooms disagree about it")
   line(cc.residual or { 255, 60, 60 },  "an exit it believes but could not draw in its true direction")
   line(cc.occluded or { 255, 210, 0 },  "a true exit with another room sitting on top of it")
+  line(cc.special  or { 150, 150, 160 }, "dotted: where an exit you type leads, when both ends are on this map")
   para("A plain short stub is an exit you have not walked yet.")
   cecho("\n")
   para("'mapterrain off' removes the colours, 'mapglyphs off' the letters.")
@@ -5128,6 +5159,12 @@ function elro.delete_room(id)
   end
   if smapChanged then elro.smap_index_dirty() ; elro.save_smap() end
 
+  -- the lines drawn FROM this room go with it: a relayout redraws only rooms that exist, so
+  -- a vertical or typed-exit line owned by a deleted room would stay on screen for ever
+  if type(getCustomLines) == "function" and type(removeCustomLine) == "function" then
+    local cl = getCustomLines(id)
+    if type(cl) == "table" then for dir in pairs(cl) do pcall(removeCustomLine, id, dir) end end
+  end
   deleteRoom(id)
   -- blunt reset: exits were rewritten on untracked rooms
   elro.cs_reset()
@@ -5157,7 +5194,7 @@ local HELP_BASIC = {
 
   { "FIXING THE MAP -- changes rooms, exits or areas" },
   { "mapwipe [area] [confirm]", "delete the whole map, or every room the SERVER put in one area; without 'confirm' it only reports what it would delete" },
-  { "mapdelroom <id>|sel", "delete a room and every edge to or from it, then relayout; 'sel' = every room selected in the mapper (also in its right-click menu)" },
+  { "mapdelroom <id>|sel", "delete a room and every edge to or from it, then relayout; 'sel' = every room selected in the mapper (also in its right-click menu). Use this rather than Mudlet's own delete: it clears the room's records and drawn lines too" },
   { "mapdeledge <f> <t>", "delete all edges from room f to room t (compass + special)" },
   { "maprecordmove [cmd]","record a special or multi-step exit (bare = capture interactively)" },
   { "mapmerge <area>",    "merge that area into the one you are standing in" },

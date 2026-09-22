@@ -52,6 +52,28 @@ function elro.vert_classify(rooms, comp, inScope)
       end
     end
   end
+  -- A recorded command ending in up/down ("climb up") is a vertical link too, for the PACKER
+  -- only: no exit is written, and draw_vertical leaves it to draw_special's grey dotted line,
+  -- since the exit is typed, not walked. Same rule as cmdDirHint on the planar side.
+  if elro.cmdDirHint ~= false then
+    if elro.smap == nil then elro.load_smap() end
+    local scope = {}
+    for _, r in ipairs(rooms) do scope[r] = true end
+    local keys = {}
+    for k in pairs(elro.smap or {}) do keys[#keys + 1] = k end
+    table.sort(keys)
+    for _, k in ipairs(keys) do
+      local a, b = string.match(k, "^(%d+):(%d+)$")
+      a, b = tonumber(a), tonumber(b)
+      if a and b and a ~= b and scope[a] and roomExists(b) then
+        local d = elro.cmd_vert(elro.smap[k])
+        local rec = elro.cs_room(a)
+        if d and not (rec and rec.ex[d]) then
+          darts[#darts + 1] = { u = a, v = b, d = d, typed = true }
+        end
+      end
+    end
+  end
   -- pairs() order is per-process and the forest/cycle split is order-dependent: sort.
   table.sort(darts, function(x, y)
     if x.u ~= y.u then return x.u < y.u end
@@ -76,6 +98,9 @@ function elro.vert_classify(rooms, comp, inScope)
   for _, p in ipairs(links) do
     local f = p.darts[1]
     p.from, p.dir = f.u, f.d
+    -- typed only if EVERY dart is: a real up exit one way and a typed command back is a real link
+    p.typed = true
+    for _, e in ipairs(p.darts) do if not e.typed then p.typed = false end end
     local rev
     for i = 2, #p.darts do
       local e = p.darts[i]
@@ -171,6 +196,8 @@ local function vert_foot(comp, lc, adj)
   return { cell = cell, ecell = ecell, seg = seg,
            minx = minx, miny = miny, maxx = maxx, maxy = maxy }
 end
+
+elro.vert_foot = vert_foot     -- special.lua docks with the same occupancy
 
 -- Does the connector strictly cross a placed edge? Sharing an endpoint is not a
 -- crossing. Returns the segment (truthy) so callers can name the crossed rooms.
@@ -1451,8 +1478,8 @@ function elro.draw_vertical(coord, sink)
     local a = p.from
     local b = (p.a == a) and p.b or p.a
     -- _vertLinks is a single global: skip links from another canvas or (under mapstep) a
-    -- floor not yet docked in this frame
-    if coord[a] and coord[b] and roomExists(a) and roomExists(b) then
+    -- floor not yet docked in this frame. A typed link is draw_special's: grey and dotted.
+    if not p.typed and coord[a] and coord[b] and roomExists(a) and roomExists(b) then
       local ax, ay = getRoomCoordinates(a)
       local bx, by = getRoomCoordinates(b)
       if ax and bx and (ax ~= bx or ay ~= by) then
