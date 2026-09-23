@@ -5,5 +5,5 @@
 return {
   "geom.lua", "keys.lua", "core.lua", "tune.lua", "canvas.lua", "audit.lua", "topo.lua",
   "levers.lua", "eqw.lua", "eqlevers.lua", "place.lua", "walk.lua", "render.lua", "vert.lua",
-  "special.lua", "window.lua", "export.lua",
+  "special.lua", "window.lua", "export.lua", "view.lua",
 }

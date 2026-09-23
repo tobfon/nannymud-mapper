@@ -662,7 +662,11 @@ function elro.draw_area_stubs(roomMap)
             -- What must never be paid for is the BASE LAYOUT, and that is guarded
             -- where it belongs -- in the solve, by the veto in canvas.lua, which is
             -- what took lyr's long ugly spoke away by removing its cause.
-            if vp then
+            if dest == elro.FRONTIER_ROOM then
+              -- an unexplored exit: the plain grey half-line, no arrowhead (a stub's look)
+              pcall(addCustomLine, r, { { rx, ry, 0 }, { hx, hy, 0 } }, d,
+                    "solid line", elro.FRONTIER_COL, false)
+            elseif vp then
               -- Three points, always. The middle one is half a cell along the door's
               -- REAL direction, so the departure is a fact even when the rest is only
               -- routing -- the same rule draw_demoted follows. When the solver did

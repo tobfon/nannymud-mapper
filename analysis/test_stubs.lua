@@ -35,6 +35,11 @@ local MAPUD = {}
 _G.setMapUserData = function(k, v) MAPUD[k] = v end
 _G.getMapUserData = function(k) return MAPUD[k] or "" end
 
+-- the classic checks below pin Mudlet's stubs; the edges mode has its own section at the end
+elro.load_stubshow = function() elro.stubshow_loaded = true end
+elro.stubshow_loaded = true
+elro.set_stubmode("classic")
+
 local aid
 local function fresh()
   reset_map() ; elro.cs_reset() ; STUBS = {} ; WRITES = 0
@@ -198,8 +203,18 @@ elro.exitStubs = true
 print("an exit that leaves the map (!MAP id=0) is not a stub")
 fresh()
 local LINES = {}
-_G.addCustomLine = function(id, pts, d) LINES[id .. ":" .. d] = true end
+_G.addCustomLine = function(id, pts, d, style, col) LINES[id .. ":" .. d] = col or true end
 _G.removeCustomLine = function(id, d) LINES[id .. ":" .. d] = nil end
+_G.getCustomLines = function(id)
+  local t = {}
+  for k, col in pairs(LINES) do
+    local rid, d = k:match("^(%d+):(.+)$")
+    if tonumber(rid) == id and type(col) == "table" then
+      t[d] = { attributes = { color = { r = col[1], g = col[2], b = col[3] } } }
+    end
+  end
+  return t
+end
 setRoomCoordinates(1, 5, 5, 0)
 elro.onRoom(1, 0, "none", "Hall", "t", "north,south,east,west", "indoors")
 ok(count(1) == 4, "four advertised exits, four stubs to begin with")
@@ -208,7 +223,7 @@ elro.onOff(1, "east")
 ok(count(1) == 3, "the marked exit lost its stub")
 ok(getRoomUserData(1, "xoff") == "east", "...and is recorded on the room")
 ok(elro.stub_area_count(aid) == before - 1, "...and no longer counts toward the halo")
-ok(LINES["1:east"] == true, "...and is drawn as a border half-line")
+ok(LINES["1:east"] ~= nil, "...and is drawn as a border half-line")
 ok(getRoomExits(1)["east"] == elro.OFF_ROOM, "...as a real exit into the placeholder room")
 ok(getRoomArea(elro.OFF_ROOM) ~= aid, "...which lives on a canvas of its own")
 elro.onOff(1, "east")
@@ -283,6 +298,41 @@ elro.onOff(0, nil)
 ok(VIEW == elro.OFF_ROOM, "the bare login form (from=0) moves the view too")
 ok((getRoomUserData(2, "xoff") or "") == "", "...and records no exit anywhere")
 elro.offmap = nil
+
+print("edges mode: the frontier is an exit to the placeholder, drawn as a half-line")
+fresh() ; LINES = {}
+elro.onRoom(1, 0, "none", "Hall", "t", "north,south,east", "indoors")
+elro.cmd_stubs("edges")
+ok(elro.stubMode == "edges" and MAPUD["elro.stubMode"] == "edges", "the mode is set and saved with the map")
+ok(count(1) == 0, "Mudlet's stubs are gone from the room")
+local ex = getRoomExits(1)
+ok(ex.north == elro.FRONTIER_ROOM and ex.south == elro.FRONTIER_ROOM and ex.east == elro.FRONTIER_ROOM,
+   "each advertised direction is an exit to the frontier placeholder")
+ok(roomExists(elro.FRONTIER_ROOM) and getRoomArea(elro.FRONTIER_ROOM) ~= aid
+   and elro.FRONTIER_ROOM ~= elro.OFF_ROOM, "...a room of its own on its own canvas")
+ok(LINES["1:north"] and LINES["1:south"] and LINES["1:east"], "...each drawn as a custom half-line")
+ok(elro.stub_halo_set() == nil, "no halo in edges mode")
+-- a real edge takes the direction over
+elro.onRoom(2, 1, "north", "Yard", "t", "south", "outdoors")
+ex = getRoomExits(1)
+ok(ex.north == 2, "walking north replaces the frontier link with the real edge")
+ok(LINES["1:north"] == nil, "...and its half-line is removed")
+ok(ex.south == elro.FRONTIER_ROOM and ex.east == elro.FRONTIER_ROOM, "...the others stay")
+-- an off-map mark is the OTHER placeholder, and both survive side by side
+elro.onOff(1, "east")
+ex = getRoomExits(1)
+ok(ex.east == elro.OFF_ROOM, "an off-map mark links to the off-map placeholder instead")
+ok(ex.south == elro.FRONTIER_ROOM, "...and an unexplored direction keeps the frontier one")
+local c = elro.draw_census(aid)
+ok(c.stubs == 1 and c.edges == 3, "the census counts a frontier link as a stub, not an edge (2 real + the reverse): " .. c.stubs .. "/" .. c.edges)
+-- hiding stubs unlinks them; showing relinks; classic mode converts back
+elro.cmd_stubs("off")
+ok(getRoomExits(1).south == nil and LINES["1:south"] == nil, "'mapstubs off' unlinks the frontier")
+elro.cmd_stubs("on")
+ok(getRoomExits(1).south == elro.FRONTIER_ROOM, "'mapstubs on' relinks it from the record")
+elro.cmd_stubs("classic")
+ok(getRoomExits(1).south == nil and count(1) == 1, "'mapstubs classic' converts back to a Mudlet stub")
+ok(getRoomExits(1).east == elro.OFF_ROOM, "...and leaves the off-map link alone")
 
 print("")
 if fails == 0 then print("PASS  " .. checks .. "/" .. checks .. " checks passed")

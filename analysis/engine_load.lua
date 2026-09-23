@@ -65,6 +65,17 @@ function saveMap() end
 function getEpoch() return os.clock() end
 function tempTimer(_, fn) TID = TID + 1 ; TIMERS[TID] = fn ; return TID end
 function killTimer(id) TIMERS[id] = nil end
+-- Fire every timer pending now, in order; timers they set wait for the next call.
+function run_timers()
+  local due = {}
+  for id in pairs(TIMERS) do due[#due + 1] = id end
+  table.sort(due)
+  for _, id in ipairs(due) do
+    local fn = TIMERS[id] ; TIMERS[id] = nil
+    if fn then fn() end
+  end
+  return #due
+end
 
 for _, m in ipairs(dofile("lua/modules.lua")) do dofile("lua/" .. m) end
 

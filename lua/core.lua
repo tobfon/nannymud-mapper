@@ -9,7 +9,7 @@ elro.dirty = elro.dirty or {}     -- areaID -> true: needs relayout
 elro.ns_cap = elro.ns_cap or 5000  -- max rooms for the O(V^2 E) NS engine; above -> flood
 -- Reported to the server by the handshake in onRoom. Kept in step with config.lua's
 -- `version` by tools/build-package.sh, which refuses to build if the two differ.
-elro.VERSION = "1.4.0"
+elro.VERSION = "1.5.0"
 
 elro.relayout_timer = elro.relayout_timer or nil
 -- min internally-connected cluster size for a server-area to keep its own tab;
@@ -1949,6 +1949,39 @@ function elro.off_room()
   return id
 end
 
+-- The second placeholder: where an UNEXPLORED exit leads. A frontier direction is a real
+-- exit to it, so Mudlet drops its own stub (drawn per frame, the map's whole cost in a big
+-- grid) and draw_area_stubs draws the half-line as a custom line instead. Its own id, not
+-- OFF_ROOM's, so "not been there" and "known but unmappable" stay two things on screen.
+elro.FRONTIER_ROOM = 899998
+elro.FRONTIER_AREA = "unexplored"          -- a canvas of its own: nothing to see there, nothing in the way
+elro.FRONTIER_COL = { 200, 200, 200 }      -- Mudlet's exit-line grey: the same ink as a corridor
+function elro.frontier_room()
+  local id = elro.FRONTIER_ROOM
+  if not roomExists(id) then
+    addRoom(id)
+    local aid = elro.areaId(elro.FRONTIER_AREA)
+    setRoomArea(id, aid)
+    setRoomCoordinates(id, 0, 0, 0)
+    if type(setRoomName) == "function" then pcall(setRoomName, id, "Unexplored") end
+    setRoomUserData(id, "sarea", elro.FRONTIER_AREA)
+    setRoomUserData(id, "adopt", elro.FRONTIER_AREA)
+    setRoomUserData(id, "via", elro.VIA_NONE)
+    elro.cs_lists_dirty() ; elro.cs_dirty(id, aid)
+  else
+    -- the first day put it, locked, on the off-map canvas: move it over once
+    local aid = elro.areaId(elro.FRONTIER_AREA)
+    if getRoomArea(id) ~= aid then
+      setRoomArea(id, aid)
+      setRoomUserData(id, "sarea", elro.FRONTIER_AREA)
+      setRoomUserData(id, "adopt", elro.FRONTIER_AREA)
+      if type(lockRoom) == "function" then pcall(lockRoom, id, false) end
+      elro.cs_lists_dirty() ; elro.cs_dirty(id, aid)
+    end
+  end
+  return id
+end
+
 -- The room the VIEW follows: the placeholder while off the map, else the player's.
 function elro.view_room()
   if elro.offmap then return elro.off_room() end
@@ -1960,7 +1993,16 @@ end
 function elro.recenter(always)
   local id = elro.view_room()
   if not id or not roomExists(id) then return end
-  centerview(id)
+  -- The embedded window sits over the console: its repaint waits until the room's text is
+  -- painted (see mapview_refresh). The docked map is elsewhere and centres at once.
+  local box = elro.miniBox
+  if box and not (box.hidden or box.auto_hidden) and type(tempTimer) == "function" then
+    if elro._cvTimer then killTimer(elro._cvTimer) end
+    elro._cvTimer = tempTimer(0.05, function() elro._cvTimer = nil ; centerview(id) end)
+  else
+    centerview(id)
+  end
+  if elro.mapview_refresh then elro.mapview_refresh(always) end
   local aid = getRoomArea(id)
   if aid == elro._viewArea and not always then return end
   -- Did the canvas actually change? Not the same question as `always` (a relayout
@@ -3738,6 +3780,31 @@ function elro.load_stubshow()
   if type(getMapUserData) ~= "function" then return end
   local ok, s = pcall(getMapUserData, "elro.stubsShown")
   if ok and type(s) == "string" and s ~= "" then elro.stubsShown = (s ~= "off") end
+  local ok2, m = pcall(getMapUserData, "elro.stubMode")
+  if ok2 and (m == "edges" or m == "classic") then elro.stubMode = m
+  elseif type(tempTimer) == "function" then
+    -- a map from before the mode existed carries Mudlet's stubs: convert it once
+    elro.set_stubmode("edges")
+    tempTimer(2, function()
+      local n = elro.stub_resync(nil)
+      cecho(string.format("\n<green>[elro]: unexplored exits are now drawn as half-lines (%d room(s) "
+        .. "converted, once). 'mapstubs classic' brings Mudlet's stubs back.\n<reset>", n))
+    end)
+  end
+end
+-- Read at load, not only at the first relayout: a fully explored map never relayouts, and the
+-- conversion above would wait for ever.
+if type(tempTimer) == "function" then
+  tempTimer(3, function() if not elro.stubshow_loaded then elro.load_stubshow() end end)
+end
+
+-- How a frontier direction is shown: "edges" (default) is an exit to the frontier placeholder
+-- drawn as our half-line (see FRONTIER_ROOM), "classic" Mudlet's own exit stub with the halo.
+-- Persisted with the map.
+elro.stubMode = elro.stubMode or "edges"
+function elro.set_stubmode(mode)
+  elro.stubMode = mode
+  if type(setMapUserData) == "function" then pcall(setMapUserData, "elro.stubMode", mode) end
 end
 
 function elro.set_stubshow(on)
@@ -3821,8 +3888,6 @@ function elro.off_record(fromId, dir)
   if not fromId or fromId == 0 or not roomExists(fromId) then
     L.why = "no known room to record on" return
   end
-  -- a wire without dir= leaves the label to the fence, as onRoom does
-  if (not dir or dir == "") and elro.fence_take then dir = elro.fence_take(fromId) end
   local d = elro.norm(dir or "")
   if not elro.dirNum[d] then L.why = "not a compass exit: [" .. tostring(d) .. "]" return end
   -- ⛔ A REAL EDGE WINS. An area that was mapped and later closed still sends the
@@ -3830,10 +3895,14 @@ function elro.off_record(fromId, dir)
   local linked = false
   for dn, dest in pairs(getRoomExits(fromId) or {}) do
     if dest and elro.norm(dn) == d then
-      if dest ~= elro.OFF_ROOM then
+      if dest == elro.FRONTIER_ROOM then              -- unexplored until now: this is the answer
+        setExit(fromId, -1, d)
+        if type(removeCustomLine) == "function" then pcall(removeCustomLine, fromId, d) end
+      elseif dest ~= elro.OFF_ROOM then
         L.why = "a real edge already leads " .. d .. " to " .. tostring(dest) return
+      else
+        linked = true
       end
-      linked = true
     end
   end
   local set = elro.off_set(fromId)
@@ -3941,34 +4010,69 @@ end
 function elro.stub_apply(id, advertised)
   if type(setExitStub) ~= "function" then return end
   local show = (elro.stubsShown ~= false) and (elro.exitStubs ~= false)
+  local edges = elro.stubMode == "edges"
   advertised = advertised or elro.stub_advertised(id)
   -- ⚠ LIVE exits, not elro.cs_room: the snapshot is invalidated at the END of
   -- onRoom, so an edge written by this very move is not in it yet and the room
   -- would shed its now-redundant stub only on a revisit.
-  local have, real = {}, {}
+  local real, front = {}, {}
   for dn, dest in pairs(getRoomExits(id) or {}) do
     if dest then
-      have[elro.norm(dn)] = true
-      if dest ~= elro.OFF_ROOM then real[elro.norm(dn)] = true end
+      local d = elro.norm(dn)
+      if dest == elro.FRONTIER_ROOM then front[d] = true
+      elseif dest ~= elro.OFF_ROOM then real[d] = true end
     end
   end
-  local now = elro.stub_set(id)
-  local want = {}
   -- an off-map mark on a direction that has since gained a REAL edge is stale
   -- (the area was opened and the edge learned from the far side): drop it
   local off = elro.off_set(id)
   for d in pairs(off) do
     if real[d] then elro.off_clear(id, d) ; off[d] = nil end
   end
+  local want = {}
   if show then
     for d in pairs(advertised) do
-      if not have[d] and not off[d] then
-        local n = elro.dirNum[d] ; if n then want[n] = true end
+      if not real[d] and not off[d] and elro.dirNum[d] then want[d] = true end
+    end
+  end
+  -- Mudlet's stubs carry the frontier in classic mode only
+  local now, wantN = elro.stub_set(id), {}
+  if not edges then for d in pairs(want) do wantN[elro.dirNum[d]] = true end end
+  for n in pairs(wantN) do if not now[n] then pcall(setExitStub, id, n, true) end end
+  for n in pairs(now) do if not wantN[n] then pcall(setExitStub, id, n, false) end end
+  -- the frontier links carry it in edges mode; either way the other form is cleared
+  local changed = false
+  for d in pairs(want) do
+    if edges and not front[d] then setExit(id, elro.frontier_room(), d) ; changed = true end
+  end
+  for d in pairs(front) do
+    if not (edges and want[d]) then
+      setExit(id, -1, d)
+      if type(removeCustomLine) == "function" then pcall(removeCustomLine, id, d) end
+      changed = true
+    end
+  end
+  -- A real edge that took a frontier direction over this move inherits its half-line, and
+  -- in Mudlet a custom line on an exit REPLACES the drawn edge: the corridor would show as
+  -- a stub. Remove ours (and only ours: the grey one) from every real direction.
+  if edges and type(getCustomLines) == "function" and type(removeCustomLine) == "function" then
+    local got, lines = pcall(getCustomLines, id)
+    for d in pairs(real) do
+      local ln = got and type(lines) == "table" and lines[d]
+      local c = type(ln) == "table" and ln.attributes and ln.attributes.color
+      local cr = c and (c.r or c[1])
+      local fc = elro.FRONTIER_COL
+      local cg, cb = c and (c.g or c[2]), c and (c.b or c[3])
+      -- 150 was the first day's shade; maps drawn then still carry it
+      if (cr == fc[1] and cg == fc[2] and cb == fc[3]) or (cr == 150 and cg == 150 and cb == 150) then
+        pcall(removeCustomLine, id, d)
       end
     end
   end
-  for n in pairs(want) do if not now[n] then pcall(setExitStub, id, n, true) end end
-  for n in pairs(now) do if not want[n] then pcall(setExitStub, id, n, false) end end
+  if changed then
+    elro.cs_dirty(id)
+    if edges and elro.draw_area_stubs then elro.draw_area_stubs({ [id] = true }) end
+  end
 end
 
 -- Re-derive every room's stubs. `scope` is an area id, or nil for the whole map.
@@ -4001,7 +4105,9 @@ function elro.draw_census(scope)
     if roomExists(r) then
       n.rooms = n.rooms + 1
       for _ in pairs(elro.stub_set(r)) do n.stubs = n.stubs + 1 end
-      for _ in pairs(elro.cs_exits(r)) do n.edges = n.edges + 1 end
+      for _, dest in pairs(elro.cs_exits(r)) do
+        if dest == elro.FRONTIER_ROOM then n.stubs = n.stubs + 1 else n.edges = n.edges + 1 end
+      end
       if type(getCustomLines) == "function" then
         local got, t = pcall(getCustomLines, r)
         if got and type(t) == "table" then for _ in pairs(t) do n.lines = n.lines + 1 end end
@@ -4071,7 +4177,9 @@ function elro.stub_area_count(aid)
       local adv = elro.stub_advertised(r)
       local ex = elro.cs_exits(r)
       local off = elro.off_set(r)
-      for d in pairs(adv) do if not ex[d] and not off[d] then n = n + 1 end end
+      for d in pairs(adv) do
+        if (not ex[d] or ex[d] == elro.FRONTIER_ROOM) and not off[d] then n = n + 1 end
+      end
     end
   end
   elro._stubCount[aid] = { n = n, rooms = #rooms }
@@ -4087,6 +4195,7 @@ end
 -- apply -- every room qualifies".
 function elro.stub_halo_set()
   if (elro.stubsShown == false) or (elro.exitStubs == false) then return {} end
+  if elro.stubMode == "edges" then return nil end   -- half-lines are cheap: no halo
   local n = elro.stubHalo or 0
   if n <= 0 then return nil end
   local cur = elro.current
@@ -4167,6 +4276,24 @@ function elro.cmd_stubs(arg)
       "<cyan>  Near you they stay -- that is where you are mapping. Further off they are hidden\n" ..
       "  and come back as you approach; the record is kept either way.<reset>\n",
       elro.stubHalo, elro.stubHaloMin))
+    return
+  end
+  -- mapstubs edges | classic: how the frontier is drawn (see stubMode)
+  if arg == "edges" or arg == "classic" then
+    if not elro.stubshow_loaded then elro.load_stubshow() end
+    elro.set_stubmode(arg)
+    elro._stubOn = nil ; elro._stubHaloActive = nil
+    elro.stub_count_dirty()
+    local nrooms = elro.stub_resync(nil)
+    if arg == "edges" then
+      cecho(string.format("\n<green>[elro]: unexplored exits are now half-lines (%d room(s) redone).<reset>\n"
+        .. "<cyan>  Each is an exit to the 'Unexplored' placeholder drawn as a custom line, which Mudlet\n"
+        .. "  paints far cheaper than its own stubs; the halo is off since it is not needed.\n"
+        .. "  'mapstubs classic' brings Mudlet's stubs back.<reset>\n", nrooms))
+    else
+      cecho(string.format("\n<green>[elro]: Mudlet's own exit stubs again (%d room(s) redone).<reset>\n", nrooms))
+      elro.stub_halo_update()
+    end
     return
   end
   local set
@@ -4373,7 +4500,6 @@ function elro.cmd_ack()
   if type(send) ~= "function" then return end
   elro._ackSent = true
   pcall(send, "maplink ack " .. tostring(elro.VERSION), false)
-  pcall(send, "maplink seq auto", false)
   cecho("\n<green>[elro]: told the link this is client " .. tostring(elro.VERSION) .. ".\n<reset>")
 end
 
@@ -4389,16 +4515,8 @@ function elro.onRoom(id, fromId, dir, name, area, exits, terr, mha, mh)
   if not elro._ackSent and type(send) == "function" then
     elro._ackSent = true
     pcall(send, "maplink ack " .. tostring(elro.VERSION), false)
-    -- and ask for the command fence; an older link prints its usage line once
-    pcall(send, "maplink seq auto", false)
   end
   if dir == nil or dir == "" then dir = "none" end
-  -- A wire without dir= (the admins' call) leaves the label to the fence: the
-  -- command the link captured for this move, if it vouches for it.
-  if dir == "none" and fromId and fromId ~= 0 then
-    local fcmd = elro.fence_take(fromId)
-    if fcmd then dir = fcmd end
-  end
   dir = elro.norm(dir)
   -- An old trigger regex (`exits=(.*)$`) leaks later fields into `exits`. A real
   -- exit list never contains '|', so split there.
@@ -4523,6 +4641,9 @@ function elro.onRoom(id, fromId, dir, name, area, exits, terr, mha, mh)
     if elro.dirNum[dir] then
       local frec = elro.cs_room(fromId) or { ex = {}, asm = {} }
       local old = frec.ex[dir]                        -- current target for this dir (nil if none)
+      -- the frontier link is "not walked yet", not a destination: this walk answers it
+      local wasFrontier = old == elro.FRONTIER_ROOM
+      if wasFrontier then old = nil end
       -- A target change is a maze mutation only if the edge it replaces was
       -- itself observed; overwriting an assumed reverse is just learning the truth.
       local assumedF = frec.asm[dir] and true or false
@@ -4537,6 +4658,8 @@ function elro.onRoom(id, fromId, dir, name, area, exits, terr, mha, mh)
         -- target, so isNew overrules a snapshot that says it is.
         local had = old == id and not isNew
         if not had then setExit(fromId, id, dir) ; touched[fromId] = true end
+        -- the half-line on that slot would replace the drawn corridor: stub_apply drops it
+        if wasFrontier then elro.stub_apply(fromId) end
         if assumedF then
           setRoomUserData(fromId, "assumed_" .. dir, "") -- forward is now OBSERVED
           touched[fromId] = true
@@ -4661,6 +4784,7 @@ function elro.onRoom(id, fromId, dir, name, area, exits, terr, mha, mh)
     _pf()
   end
   elro.current = id
+  if elro.walkTarget == id then elro.walkTarget = nil end
   -- invalidate the snapshot for exactly the rooms written; a cross-area edge
   -- bumps both sides
   local _pfCs = pf("csdirty")
@@ -4718,22 +4842,6 @@ function elro.onRoom(id, fromId, dir, name, area, exits, terr, mha, mh)
   end
 end
 
--- ---- the command fence (!MAPSEQ) -------------------------------------------
--- The link prints "!MAPSEQ <n> <command>" before every parsed command, so a
--- !MAP line that arrives before the next fence was produced by that command.
--- The fence remembers the room the client was in when it arrived; a !MAP whose
--- `from` is a different room was not this command's doing (something moved us
--- without a !MAP line, or the fence is stale). A fence older than fenceWindow
--- ms is not trusted either: a follow or a vehicle can move us long after the
--- last thing we typed. Each fence labels at most one move.
-if elro.fenceShow == nil then elro.fenceShow = false end     -- keep the lines visible
-if elro.fenceWindow == nil then elro.fenceWindow = 4000 end  -- ms
-
-function elro.onSeq(n, cmd)
-  cmd = (cmd or ""):gsub("^%s+", ""):gsub("%s+$", "")
-  elro.fence = { n = n, cmd = cmd, from = elro.current, at = elro.now_ms() }
-end
-
 -- Mudlet's special exits of a room as a list of { to=, cmd= }. The table has
 -- three shapes across builds ({cmd->id}, {id->cmd}, {id->{cmd->..}}) and the id
 -- half may be a string, so the id is whichever half is a number that names a
@@ -4763,16 +4871,6 @@ end
 function elro.has_special(from, to)
   for _, e in ipairs(elro.special_list(from)) do if e.to == to then return true end end
   return false
-end
-
--- The typed command behind a move fromId -> here, or nil. Consumes the fence.
-function elro.fence_take(fromId)
-  local f = elro.fence
-  if not f or f.used then return nil end
-  f.used = true
-  if f.cmd == "" or f.from ~= fromId then return nil end
-  if elro.now_ms() - f.at > elro.fenceWindow then return nil end
-  return f.cmd
 end
 
 -- ---- manual edge recording (maprecordmove) --------------------------------
@@ -4920,9 +5018,9 @@ function elro.rec_start(arg)
 end
 
 -- replay a path step-by-step, expanding recorded multi-command edges inline
-function elro.walk_steps(dirs, path)
+function elro.walk_steps(dirs, path, from)
   if elro.smap == nil then elro.load_smap() end
-  local from = elro.current
+  from = from or elro.current
   for i = 1, #dirs do
     local to = path and path[i]
     local seq = to and elro.smap[from .. ":" .. to]
@@ -5027,6 +5125,99 @@ function elro.cmd_avoid(arg, on)
   cecho(string.format("\n<green>[elro]: speedwalks %s %d room(s).%s\n<reset>",
         on and "now keep out of" or "may use", n,
         on and " A walk with no other way round will say there is no path." or ""))
+end
+
+-- mapmark / mapreturn: a named bookmark on a room, kept in the room's user data so it lives
+-- in the map like the avoid flag. A bare name is "here": mark, go and sell, return.
+local MARK = "mark"
+local function mark_name(arg)
+  arg = (arg or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
+  return arg == "" and "here" or arg
+end
+function elro.mark_find(name)
+  for id in pairs(elro.cs_all_rooms()) do
+    if roomExists(id) and getRoomUserData(id, MARK) == name then return id end
+  end
+end
+-- The name is a command of its own: 'green' walks to the mark 'green'. The alias would eat
+-- the word before the game saw it, so the directions and everyday verbs are refused.
+local MARK_TAKEN = {}
+for w in ("n s e w ne nw se sw north south east west northeast northwest southeast southwest "
+          .. "u d up down enter exit leave out in look l i inv score kill get put drop say "
+          .. "here"):gmatch("%S+") do MARK_TAKEN[w] = true end
+elro._markAliases = elro._markAliases or {}
+function elro.mark_alias(name, on)
+  if type(tempAlias) ~= "function" then return end
+  local old = elro._markAliases[name]
+  if old and type(killAlias) == "function" then pcall(killAlias, old) end
+  elro._markAliases[name] = nil
+  if on then
+    elro._markAliases[name] = tempAlias("^" .. name .. "$", function() elro.cmd_return(name) end)
+  end
+end
+function elro.mark_aliases_rebuild()
+  for name in pairs(elro._markAliases) do elro.mark_alias(name, false) end
+  for id in pairs(elro.cs_all_rooms()) do
+    local m = roomExists(id) and getRoomUserData(id, MARK) or ""
+    if m ~= "" and not MARK_TAKEN[m] then elro.mark_alias(m, true) end
+  end
+end
+function elro.cmd_mark(arg)
+  if not elro.current or not roomExists(elro.current) then
+    cecho("\n<red>[elro]: current room unknown; move once first.\n<reset>") return
+  end
+  local name = mark_name(arg)
+  if not name:match("^[%w_]+$") then
+    cecho("\n<red>[elro]: a mark is one word of letters and digits.\n<reset>") return
+  end
+  if MARK_TAKEN[name] and name ~= "here" then
+    cecho("\n<red>[elro]: '" .. name .. "' is a word the game needs; pick another.\n<reset>") return
+  end
+  local old = elro.mark_find(name)
+  if old and old ~= elro.current then setRoomUserData(old, MARK, "") end
+  setRoomUserData(elro.current, MARK, name)
+  if name == "here" then
+    cecho(string.format("\n<green>[elro]: 'here' is now %s (%d). 'mapreturn' walks back.\n<reset>",
+          getRoomName(elro.current) or "this room", elro.current))
+  else
+    elro.mark_alias(name, true)
+    cecho(string.format("\n<green>[elro]: '%s' is now %s (%d). Typing '%s' walks there; "
+          .. "'mapunmark %s' gives the word back to the game.\n<reset>",
+          name, getRoomName(elro.current) or "this room", elro.current, name, name))
+  end
+end
+function elro.cmd_return(arg)
+  local name = mark_name(arg)
+  local id = elro.mark_find(name)
+  if not id then
+    cecho("\n<red>[elro]: no mark called '" .. name .. "'. 'mapmark" .. (name == "here" and "" or (" " .. name))
+          .. "' sets it where you stand; 'mapmarks' lists them.\n<reset>") return
+  end
+  if id == elro.walk_origin() then cecho("\n<green>[elro]: you are at '" .. name .. "'.\n<reset>") return end
+  elro.gotoRoom(id)
+end
+function elro.cmd_unmark(arg)
+  local name = mark_name(arg)
+  local id = elro.mark_find(name)
+  if not id then cecho("\n<red>[elro]: no mark called '" .. name .. "'.\n<reset>") return end
+  setRoomUserData(id, MARK, "")
+  elro.mark_alias(name, false)
+  cecho("\n<green>[elro]: mark '" .. name .. "' removed.\n<reset>")
+end
+-- The aliases are not saved: rebuilt from the map at every load, once the map is there.
+if type(tempTimer) == "function" then tempTimer(2, function() elro.mark_aliases_rebuild() end) end
+function elro.cmd_marks()
+  local rows = {}
+  for id in pairs(elro.cs_all_rooms()) do
+    local m = roomExists(id) and getRoomUserData(id, MARK) or ""
+    if m ~= "" then rows[#rows + 1] = { m, id } end
+  end
+  table.sort(rows, function(a, b) return a[1] < b[1] end)
+  cecho(string.format("\n<cyan>[elro] %d mark(s):<reset>\n", #rows))
+  for _, r in ipairs(rows) do
+    cecho(string.format("<yellow>  %-12s<reset> %s (%d)\n", r[1], getRoomName(r[2]) or "?", r[2]))
+  end
+  if #rows == 0 then cecho("  (none -- 'mapmark' marks the room you are in, 'mapmark shop' names one)\n") end
 end
 
 -- list outgoing and incoming edges for a room (default: current room)
@@ -5182,12 +5373,14 @@ local HELP_BASIC = {
   { "BASICS" },
   { "maphelp [advanced]", "this list; 'advanced' has the commands for shaping the map by hand, mazes, diagnostics and tuning" },
   { "mapupdate",          "replace this package with the newest release. Downloads first, so a failed download changes nothing; your map is untouched" },
-  { "mapwin [left|right|lock|unlock|reset]", "open or close the map as a small window pinned over a top corner of the text (it opens by itself the first time). Drag its inner or bottom edge to resize it; size and corner are remembered. 'lock' removes the frame, 'reset' restores the first size and the right corner" },
+  { "mapwin [embed|left|right|lock|unlock|reset]", "open or close the map (Mudlet's own map window, the same as the Map button; it opens by itself the first time). Drag its title bar to float or dock it. 'mapwin embed' is the small window pinned over a top corner of the text instead; there 'left/right' pick the corner, 'lock' removes the frame, 'reset' restores the first size" },
   { "maplegend",          "what the colours, dots, letters and lines on the map mean" },
+  { "mapview [fit|plain|reset|zoom <px>]", "a prototype: the map you are on drawn in the style of mapexport, in a second window. A red ring marks you; click a room to walk there; the wheel zooms, 'fit' shows the whole map. Mudlet's map stays where it is" },
   { "mapexport [area] [a4] [plain]", "write one map as a picture (an SVG any browser opens): white, pale terrain tints, every room numbered and listed, as big as the map needs. Bare = the map you are on. 'a4' fits it on one sheet to print instead; 'plain' leaves the tints out. A picture, not a copy of your map" },
   { "maphelp share",      "how to copy your map to another profile, back it up, or give it to someone" },
   { "mapgoto <id|area>", "speedwalk to a room id, or the nearest room of a named area (substring ok). Double-clicking a room on the map walks there too, as does 'Walk here' in its right-click menu" },
   { "mapnear [terrain]",  "walk to the nearest room of a terrain (heal, shop, port...); bare = list the names you can search for" },
+  { "mapmark [name]",     "remember the room you are in under a name: from then on typing that name walks there ('mapmark bank', later 'bank'). Bare = 'here', walked back to with 'mapreturn': mark, go and sell, return. Marks are kept in the map. 'mapmarks' lists them, 'mapunmark <name>' forgets one and gives the word back" },
   { "mapavoid [id,...|sel]", "keep speedwalks out of a room (bare = the one you are in): a death trap, an aggressive monster. The same as 'Lock' in the map's right-click menu" },
   { "mapunavoid [id,...|sel]", "let speedwalks use it again   (mapavoids = list them)" },
   { "mapsearch <text>",  "find rooms whose name, or whose area's name, contains the text (any case); lists them with the ids 'mapgoto' takes" },
@@ -5204,7 +5397,7 @@ local HELP_BASIC = {
   { "APPEARANCE -- changes only how the map is drawn" },
   { "mapterrain [on|off]","colour rooms by terrain ('maplegend' says which colour is what)" },
   { "mapglyphs [on|off]", "a letter on rooms with an exit you type instead of a direction" },
-  { "mapstubs [on|off|halo N]","what the canvas draws (rooms/edges/stubs/lines). Mudlet redraws every stub every frame, so a big part-explored area is slow: the HALO shows only stubs within N cells of you once an area has a lot. Lossless -- the record is kept" },
+  { "mapstubs [on|off|edges|classic|halo N]","what the canvas draws (rooms/edges/stubs/lines). Mudlet redraws every stub every frame, so a big part-explored area is slow. 'edges' draws each unexplored exit as a short grey half-line instead (far cheaper, no halo needed); 'classic' is Mudlet's stubs with the HALO, which shows only stubs within N cells of you once an area has a lot. Lossless either way -- the record is kept" },
   { "mapvert [on|off]",   "dock up/down exits as separate floors (remembered)" },
   { "mapareamin <n>",     "smallest cluster that keeps its own area off the world map (persistent)" },
 }
@@ -5552,6 +5745,17 @@ function elro.goto_target(arg)
   if arg:match("^%d+$") then elro.gotoRoom(tonumber(arg)) else elro.goto_area(arg) end
 end
 
+-- Where the next walk starts: the end of a walk still in flight, else the room we are in.
+-- 'mapreturn shop;z;mapreturn' on one line asks for the second walk before a single !MAP
+-- of the first has come back; planned from the map's idea of "here" it would go nowhere.
+function elro.walk_origin()
+  local t = elro.walkTarget
+  if t and t ~= elro.current and roomExists(t) and os.time() - (elro.walkTargetAt or 0) < 60 then
+    return t
+  end
+  return elro.current
+end
+
 function elro.gotoRoom(target)
   if not target or not roomExists(target) then
     cecho("\n<red>[elro]: unknown room id.\n<reset>") return
@@ -5559,9 +5763,11 @@ function elro.gotoRoom(target)
   if not elro.current then
     cecho("\n<red>[elro]: current room unknown; move once first.\n<reset>") return
   end
-  if elro.current == target then return end
-  if getPath(elro.current, target) then
-    elro.walk_steps(speedWalkDir, speedWalkPath)
+  local from = elro.walk_origin()
+  if from == target then return end
+  if getPath(from, target) then
+    elro.walkTarget, elro.walkTargetAt = target, os.time()
+    elro.walk_steps(speedWalkDir, speedWalkPath, from)
   else
     cecho("\n<red>[elro]: no known path to " .. target .. ".\n<reset>")
   end

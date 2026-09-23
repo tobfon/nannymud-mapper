@@ -64,8 +64,11 @@ function elro.export_collect(aid)
           end
         elseif roomExists(x) then                          -- leaves this map
           r.stubs[#r.stubs + 1] = de
-          local an = elro.areaName(getRoomArea(x))
-          if an and an ~= "" then r.to[an] = true end
+          -- the placeholders (unexplored, off the map) are stubs with nowhere to name
+          if x ~= elro.FRONTIER_ROOM and x ~= elro.OFF_ROOM then
+            local an = elro.areaName(getRoomArea(x))
+            if an and an ~= "" then r.to[an] = true end
+          end
         end
       end
     end
@@ -142,6 +145,86 @@ local function list_text(r)
   return s
 end
 
+-- The drawing itself, shared by the export and the in-game view: connections, stubs, up/down
+-- and typed-exit lines, then the rooms, then their labels. `g` carries the geometry: map(x, y)
+-- takes map coordinates to drawing units, cell/box/thin the sizes, num the room -> number
+-- table (empty: no numbers, the glyph takes the middle), plain leaves the tints out.
+function elro.export_draw(w, rooms, edges, g)
+  local map, cell, box, thin, plain, num = g.map, g.cell, g.box, g.thin, g.plain, g.num or {}
+  local function px(r) return (map(r.x, r.y)) end
+  local function py(r) local _, y = map(r.x, r.y) return y end
+  w('<g stroke="#222222" stroke-width="%.2f" stroke-linecap="round" fill="none">\n', thin)
+  for _, e in ipairs(edges) do
+    w('<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f"%s/>\n', px(e.a), py(e.a), px(e.b), py(e.b),
+      e.oneway and string.format(' stroke-dasharray="%.2f %.2f"', thin * 4, thin * 3) or "")
+  end
+  for _, r in ipairs(rooms) do
+    for _, de in ipairs(r.stubs) do
+      local len = math.sqrt(de[1] * de[1] + de[2] * de[2])
+      local ux, uy = de[1] / len, -de[2] / len
+      w('<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke-dasharray="%.2f %.2f"/>\n',
+        px(r), py(r), px(r) + ux * cell * 0.7, py(r) + uy * cell * 0.7, thin, thin * 2.2)
+    end
+  end
+  local function poly(pts)
+    local s = {}
+    for _, p in ipairs(pts) do s[#s + 1] = string.format("%.2f,%.2f", map(p[1], p[2])) end
+    return table.concat(s, " ")
+  end
+  for _, pts in ipairs(elro.export_verticals(rooms)) do
+    w('<polyline points="%s" stroke-width="%.2f" stroke-dasharray="%.2f %.2f %.2f %.2f"/>\n',
+      poly(pts), thin * 1.4, thin * 6, thin * 2.5, thin, thin * 2.5)
+  end
+  -- typed exits between two rooms here: grey and dotted, as on screen
+  for _, pts in ipairs(elro.export_verticals(rooms, "special")) do
+    w('<polyline points="%s" stroke="#777777" stroke-width="%.2f" stroke-dasharray="%.2f %.2f"/>\n',
+      poly(pts), thin * 1.2, thin * 1.2, thin * 2.4)
+  end
+  w('</g>\n')
+
+  for _, r in ipairs(rooms) do
+    local x, y = px(r) - box / 2, py(r) - box / 2
+    local fill = (not plain and r.cell) and tint(r.cell.col, 0.38) or "#ffffff"
+    w('<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="%s" stroke="#222222" stroke-width="%.2f"/>\n',
+      x, y, box, box, fill, thin * 1.3)
+    -- in the corner, not the middle as on screen: the middle is where the number goes
+    if r.dot and not plain then
+      w('<circle cx="%.2f" cy="%.2f" r="%.2f" fill="%s" stroke="#222222" stroke-width="%.2f"/>\n',
+        x + box * 0.2, y + box * 0.8, box * 0.15, tint(r.dot.col, 0.75), thin * 0.6)
+    end
+    if r.up then
+      w('<path d="M %.2f %.2f l %.2f %.2f h %.2f z"/>\n', x + box, y - box * 0.28,
+        -box * 0.2, box * 0.26, box * 0.4)
+    end
+    if r.down then
+      w('<path d="M %.2f %.2f l %.2f %.2f h %.2f z"/>\n', x + box, y + box * 1.28,
+        -box * 0.2, -box * 0.26, box * 0.4)
+    end
+  end
+
+  -- The number has the middle; the letter for a typed exit has the top left corner, in
+  -- italics so the two are not read as one. With no numbers the letter takes the middle.
+  for _, r in ipairs(rooms) do
+    if num[r] then
+      local label = tostring(num[r])
+      local fs = box * (#label >= 3 and 0.36 or (#label == 2 and 0.46 or 0.56))
+      w('<text x="%.2f" y="%.2f" font-size="%.2f" text-anchor="middle" font-weight="bold">%s</text>\n',
+        px(r), py(r) + fs * 0.36, fs, label)
+    end
+    if r.glyph and box >= 1.6 then
+      if num[r] then
+        local fs = box * 0.34
+        w('<text x="%.2f" y="%.2f" font-size="%.2f" font-style="italic">%s</text>\n',
+          px(r) - box * 0.44, py(r) - box * 0.5 + fs * 0.9, fs, esc(r.glyph))
+      else
+        local fs = box * 0.56
+        w('<text x="%.2f" y="%.2f" font-size="%.2f" text-anchor="middle" font-style="italic">%s</text>\n',
+          px(r), py(r) + fs * 0.36, fs, esc(r.glyph))
+      end
+    end
+  end
+end
+
 -- The SVG text for one area. `plain` leaves the terrain tints out. `free` is for a screen
 -- (a wiki page), not paper: no A4 to fit, so the cell is a fixed comfortable size, the image
 -- is as big as the map needs, every room is numbered and the list runs as long as it must.
@@ -203,8 +286,9 @@ function elro.export_svg(aid, plain, free)
   local numbers = box >= 3                     -- below this a number cannot be read
   local ox = MARGIN + (best.W - nx * cell) / 2
   local oy = MARGIN + HEADER + (best.mapH - ny * cell) / 2
-  local function px(r) return ox + (r.x - minx + 0.5) * cell end
-  local function py(r) return oy + (maxy - r.y + 0.5) * cell end      -- Mudlet's y points up
+  local function map(x, y) return ox + (x - minx + 0.5) * cell, oy + (maxy - y + 0.5) * cell end
+  local function px(r) return (map(r.x, r.y)) end
+  local function py(r) local _, y = map(r.x, r.y) return y end       -- Mudlet's y points up
   local thin = math.max(0.12, math.min(0.3, cell * 0.035))
 
   local o = {}
@@ -227,84 +311,10 @@ function elro.export_svg(aid, plain, free)
   w('<text x="%.1f" y="%.1f" font-size="3" text-anchor="end">N</text>\n', pw - MARGIN - 1.2, MARGIN + 4)
   w('<path d="M %.1f %.1f l -1.6 3.4 h 3.2 z"/>\n', pw - MARGIN - 2.2, MARGIN + 5)
 
-  w('<g stroke="#222222" stroke-width="%.2f" stroke-linecap="round" fill="none">\n', thin)
-  for _, e in ipairs(edges) do
-    w('<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f"%s/>\n', px(e.a), py(e.a), px(e.b), py(e.b),
-      e.oneway and string.format(' stroke-dasharray="%.2f %.2f"', thin * 4, thin * 3) or "")
-  end
-  for _, r in ipairs(rooms) do
-    for _, de in ipairs(r.stubs) do
-      local len = math.sqrt(de[1] * de[1] + de[2] * de[2])
-      local ux, uy = de[1] / len, -de[2] / len
-      w('<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke-dasharray="%.2f %.2f"/>\n',
-        px(r), py(r), px(r) + ux * cell * 0.7, py(r) + uy * cell * 0.7, thin, thin * 2.2)
-    end
-  end
-  local verticals = elro.export_verticals(rooms)
-  for _, pts in ipairs(verticals) do
-    local s = {}
-    for _, p in ipairs(pts) do
-      s[#s + 1] = string.format("%.2f,%.2f", ox + (p[1] - minx + 0.5) * cell,
-                                oy + (maxy - p[2] + 0.5) * cell)
-    end
-    w('<polyline points="%s" stroke-width="%.2f" stroke-dasharray="%.2f %.2f %.2f %.2f"/>\n',
-      table.concat(s, " "), thin * 1.4, thin * 6, thin * 2.5, thin, thin * 2.5)
-  end
-  -- typed exits between two rooms here: grey and dotted, as on screen
-  for _, pts in ipairs(elro.export_verticals(rooms, "special")) do
-    local s = {}
-    for _, p in ipairs(pts) do
-      s[#s + 1] = string.format("%.2f,%.2f", ox + (p[1] - minx + 0.5) * cell,
-                                oy + (maxy - p[2] + 0.5) * cell)
-    end
-    w('<polyline points="%s" stroke="#777777" stroke-width="%.2f" stroke-dasharray="%.2f %.2f"/>\n',
-      table.concat(s, " "), thin * 1.2, thin * 1.2, thin * 2.4)
-  end
-  w('</g>\n')
-
-  for _, r in ipairs(rooms) do
-    local x, y = px(r) - box / 2, py(r) - box / 2
-    local fill = (not plain and r.cell) and tint(r.cell.col, 0.38) or "#ffffff"
-    w('<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="%s" stroke="#222222" stroke-width="%.2f"/>\n',
-      x, y, box, box, fill, thin * 1.3)
-    -- in the corner, not the middle as on screen: the middle is where the number goes
-    if r.dot and not plain then
-      w('<circle cx="%.2f" cy="%.2f" r="%.2f" fill="%s" stroke="#222222" stroke-width="%.2f"/>\n',
-        x + box * 0.2, y + box * 0.8, box * 0.15, tint(r.dot.col, 0.75), thin * 0.6)
-    end
-    if r.up then
-      w('<path d="M %.2f %.2f l %.2f %.2f h %.2f z"/>\n', x + box, y - box * 0.28,
-        -box * 0.2, box * 0.26, box * 0.4)
-    end
-    if r.down then
-      w('<path d="M %.2f %.2f l %.2f %.2f h %.2f z"/>\n', x + box, y + box * 1.28,
-        -box * 0.2, -box * 0.26, box * 0.4)
-    end
-  end
-
-  -- The number has the middle; the letter for a typed exit has the top left corner, in
-  -- italics so the two are not read as one. With no numbers the letter takes the middle.
   local num = {}
   if numbers then for i = 1, best.shown do num[list[i]] = i end end
-  for _, r in ipairs(rooms) do
-    if num[r] then
-      local label = tostring(num[r])
-      local fs = box * (#label >= 3 and 0.36 or (#label == 2 and 0.46 or 0.56))
-      w('<text x="%.2f" y="%.2f" font-size="%.2f" text-anchor="middle" font-weight="bold">%s</text>\n',
-        px(r), py(r) + fs * 0.36, fs, label)
-    end
-    if r.glyph and box >= 1.6 then
-      if num[r] then
-        local fs = box * 0.34
-        w('<text x="%.2f" y="%.2f" font-size="%.2f" font-style="italic">%s</text>\n',
-          px(r) - box * 0.44, py(r) - box * 0.5 + fs * 0.9, fs, esc(r.glyph))
-      else
-        local fs = box * 0.56
-        w('<text x="%.2f" y="%.2f" font-size="%.2f" text-anchor="middle" font-style="italic">%s</text>\n',
-          px(r), py(r) + fs * 0.36, fs, esc(r.glyph))
-      end
-    end
-  end
+  elro.export_draw(w, rooms, edges, { map = map, cell = cell, box = box, thin = thin,
+                                      plain = plain, num = num })
 
   local ty = MARGIN + HEADER + best.mapH + 4
   if not plain then

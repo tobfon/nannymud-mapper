@@ -61,6 +61,15 @@ local function want_x(box, pw)
   return math.max(0, pw - box:get_width())
 end
 
+-- The embedded mapper is a widget Mudlet also resizes on its own (seen after focus changes:
+-- it painted black over part of the text, outside its frame). Geyser's reposition is a
+-- createMapper at the frame's geometry, which with the widget already made is a resize.
+local function refit()
+  if elro.miniMap and not (elro.miniMap.hidden or elro.miniMap.auto_hidden) then
+    pcall(function() elro.miniMap:reposition() end)
+  end
+end
+
 -- Keep the size the player chose, in pixels, and pin the corner.
 local function anchor()
   local box = elro.miniBox
@@ -68,6 +77,7 @@ local function anchor()
   local pw = pane_width()
   box:resize(math.min(box:get_width(), pw), box:get_height())
   box:move(want_x(box, pw), 0)
+  refit()
 end
 
 -- A session opening beside this one raises no resize event, so once a second while the
@@ -79,7 +89,7 @@ local function watch()
     local box = elro.miniBox
     if not box or box.hidden or box.auto_hidden then return end
     local ok, off = pcall(function() return box:get_x() - want_x(box, pane_width()) end)
-    if ok and not box.minimized and math.abs(off) > 1 then anchor() end
+    if ok and not box.minimized and math.abs(off) > 1 then anchor() else refit() end
     elro._winWatch = tempTimer(1, tick)
   end
   tick()
@@ -165,9 +175,55 @@ local function show()
   if at and type(centerview) == "function" then pcall(centerview, at) end
 end
 
+-- Mudlet's own map widget, what the Map button opens: docked or floating as Mudlet last had
+-- it, size and place remembered by Mudlet. The default since the embedded form lost
+-- console paints (rows of text never drawn while it was up; see DESIGN.md).
+local function dock_open()
+  quietly(function() pcall(openMapWidget) end)
+  elro._dockOpen = true
+  local at = elro.view_room() or (type(getPlayerRoom) == "function" and getPlayerRoom()) or nil
+  if at and type(centerview) == "function" then pcall(centerview, at) end
+end
+local function dock_close()
+  pcall(closeMapWidget)
+  elro._dockOpen = false
+end
+local function dock_first_marker() return getMudletHomeDir() .. "/elro_export/.mapwin_seen" end
+
 function elro.mapwin(arg)
-  if type(Adjustable) ~= "table" or type(Geyser) ~= "table" or not Geyser.Mapper then
+  if type(openMapWidget) ~= "function" or type(closeMapWidget) ~= "function" then
     cecho("\n<red>[elro]: this Mudlet is too old for mapwin (needs 4.8).\n<reset>") return
+  end
+  local embedded = elro.miniBox and not (elro.miniBox.hidden or elro.miniBox.auto_hidden)
+  if arg == "embed" then
+    dock_close()
+    return elro.mapwin_embed(nil)
+  elseif arg ~= nil and not embedded then
+    say("'mapwin " .. arg .. "' applies to the embedded window ('mapwin embed'). The map you "
+      .. "have is Mudlet's own: drag its title bar to float it, resize it by its edges, the Map "
+      .. "button or 'mapwin' closes it.")
+    return
+  elseif arg == nil and not embedded then
+    -- one map widget per profile: once it has been inside our label it stays bound there
+    if elro.miniBox then
+      say("the map is still bound to the embedded window from earlier in this session, and "
+        .. "Mudlet cannot dock it again until it restarts. Restart Mudlet and type 'mapwin', "
+        .. "or 'mapwin embed' to use the small window now.")
+      return
+    end
+    if elro._dockOpen then dock_close() else
+      dock_open()
+      say("map open. Drag its title bar to float it, or dock it to a side; 'mapwin' again "
+        .. "closes it. 'mapwin embed' is the small window over the text instead.")
+    end
+    return
+  end
+  return elro.mapwin_embed(arg)
+end
+
+function elro.mapwin_embed(arg)
+  if type(Adjustable) ~= "table" or type(Geyser) ~= "table" or not Geyser.Mapper then
+    cecho("\n<red>[elro]: this Mudlet is too old for the embedded window (needs 4.8).\n<reset>") return
   end
   local can, why = can_embed()
   if not can then
@@ -217,16 +273,23 @@ end
 -- offline harness.
 function elro.mapwin_boot()
   if elro.miniBox or type(Adjustable) ~= "table" or type(getMudletHomeDir) ~= "function" then return end
-  local first = type(io.exists) == "function" and not io.exists(save_path())
-  if not first and not was_open() then return end
-  if not build() then return end
-  if first then compact_banner() end
-  show()
-  if first then
-    elro.miniBox:save()
-    say("this is the map window. Drag its inner or bottom edge to resize it; 'mapwin' closes "
-      .. "it and it stays closed, 'maphelp' has the rest.")
+  if type(io.exists) ~= "function" then return end
+  -- a player who chose the embedded window keeps it
+  if io.exists(save_path()) and was_open() then
+    if not build() then return end
+    show()
+    return
   end
+  -- otherwise Mudlet's own map, opened once on a first install; after that Mudlet restores
+  -- whatever the player left, as it does for the Map button
+  if io.exists(dock_first_marker()) or type(openMapWidget) ~= "function" then return end
+  local dir = getMudletHomeDir() .. "/elro_export"
+  if lfs and lfs.mkdir then pcall(lfs.mkdir, dir) end
+  local f = io.open(dock_first_marker(), "w")
+  if f then f:write(os.date()) ; f:close() end
+  dock_open()
+  say("this is the map. Drag its title bar to float it or dock it to a side; the Map button "
+    .. "or 'mapwin' closes it, 'maphelp' has the rest.")
 end
 
 -- A reload or reinstall keeps the window (elro survives) but not this module's timer chain.
@@ -241,13 +304,20 @@ end
 if type(tempTimer) == "function" then tempTimer(1, function() elro.mapwin_boot() end) end
 
 if type(registerAnonymousEventHandler) == "function" then
-  for _, k in ipairs({ "_winLoad", "_winResize", "_winDrop" }) do
+  for _, k in ipairs({ "_winLoad", "_winResize", "_winDrop", "_winMapOpen" }) do
     if elro[k] and type(killAnonymousEventHandler) == "function" then
       pcall(killAnonymousEventHandler, elro[k])
     end
   end
   elro._winLoad = registerAnonymousEventHandler("sysLoadEvent",
     function() elro.mapwin_boot() end)
+  -- The Map button opens the same widget behind our back; there is no close event, so a
+  -- 'mapwin' after a button close opens rather than closes. One extra keystroke, no harm.
+  elro._winMapOpen = registerAnonymousEventHandler("mapOpenEvent", function()
+    if not (elro.miniBox and not (elro.miniBox.hidden or elro.miniBox.auto_hidden)) then
+      elro._dockOpen = true
+    end
+  end)
   elro._winResize = registerAnonymousEventHandler("sysWindowResizeEvent", anchor)
   -- A drag or resize just ended: keep the new size, snap back to the corner.
   elro._winDrop = registerAnonymousEventHandler("AdjustableContainerRepositionFinish",

@@ -31,6 +31,7 @@ module never needs a package reinstall. Offline harnesses loop over the same lis
 | `special.lua` | typed-exit docking: groups a recorded special exit joins are placed beside each other, after the verticals |
 | `window.lua` | `mapwin`: the map as a small resizable window inside the session |
 | `export.lua` | `mapexport`: one map as an A4 SVG made for paper |
+| `view.lua` | `mapview`: a prototype window showing the export's drawing of the map you are on |
 
 Every module binds what it needs from earlier ones into file-scope locals at load
 (`elro.g`, `elro.k`, `elro.exits`, `elro.clk`, `elro.TUNE`, `elro.area_adjacency`) and fails
@@ -65,8 +66,8 @@ server !MAP line
   -> core.relayout_done     re-run if the graph moved meanwhile (level-triggered, spin-guarded)
 ```
 
-**The captured command.** The link captures every command as the parser ran it
-(asked for by `maplink seq auto` in the handshake) and the server sends it as the
+**The captured command.** The server reads every command as the parser ran it
+(`query_verb()` plus `query_verb_args()`) and sends it as the
 `!MAP` line's `dir` for the player's own moves and party follows. A non-compass
 `dir` is therefore a replayable command and `onRoom` records it as the edge
 command (the same store `maprecordmove` writes, first-writer wins), which is what
@@ -173,17 +174,11 @@ session, so a relog silently switched the markers off. 1.0.0 had no users, so
 the gate went. The ack itself is still re-sent after a reload or a reconnect,
 and by `mapack`, because the version notice and `maplink`'s status use it.
 
-**The command fence** is the fallback for a wire without `dir=` (an admin
-decision, `WIRE_DIR` in the server daemon): the link then prints `!MAPSEQ <n>
-<command>` before every parsed command. `core.onSeq` keeps only the latest fence,
-with the room the client was in when it arrived, and `onRoom` takes it once per
-arrival when `dir` is missing: it labels the move only if its `from` is that room
-and the fence is younger than `fenceWindow` ms, so a stale fence can never label a
-vehicle. The trigger regex treats `dir=` as optional for this. The wire order is
-fence, room description, `!MAP`; the fence lines are gagged unless `elro.fenceShow`
-is set. The trigger accepts a prompt (`> `) in front of the fence: the prompt has
-no trailing newline, and in a queued speedwalk the local command echo that would
-normally break the line is long gone, so the fence arrives glued to it. The server side and its driver lessons are in `../DESIGN.md`.
+**The command fence (`!MAPSEQ`) is gone** (1.5.0, 2026-09-23): the server
+reads the typed command from the driver itself now, so `onSeq`, `fence_take`,
+the `maplink seq auto` handshake line and the fence trigger are removed. The
+trigger regex still treats `dir=` as optional; a missing field is `none`. The
+server side is in `../DESIGN.md`.
 
 ### The c-space snapshot (core)
 
@@ -388,6 +383,36 @@ teal honoured verticals, red residual lies (edges the engine kept but drew off-a
 terrain repaint, which loses the highlight slot to occluded/maze marks. `drawn_direction_ok` is
 the one definition of "this drawing tells the truth about this exit", shared by every overlay.
 
+### Unexplored exits are edges to a placeholder (2026-09-23)
+
+Mudlet paints every exit stub as its own pen and line on every frame, where two linked
+rooms share one segment; a part-explored grid (titleist: 1239 stubs on 393 rooms) was slow
+while standing still, and the halo only capped that. The user noticed our cross-area
+half-lines cost nothing in comparison, and asked whether the stubs could be faked the same
+way. They can, because the machinery already existed for exits that leave the map: an
+advertised direction with no edge becomes a real exit to a second placeholder room,
+`FRONTIER_ROOM` 899998 "Unexplored" on a canvas of its own (`unexplored`; a room with no
+exits out can never be on a path, so it is not locked, which would paint it red), and
+`draw_area_stubs` draws it as a grey half-line with no arrowhead, in the pass that
+stays smooth. Mudlet draws no stub for a direction that has an exit. Verdict on the first
+try: "works, blazing fast too", and it became the default (`mapstubs edges`; `classic` is
+Mudlet's stubs with the halo, kept for comparison; a map without a saved mode converts once
+at load).
+
+* **Its own placeholder, not 899999.** An off-map mark (blue, arrowed, to 899999) says "known
+  and unmappable"; a frontier link says "not been there". Same drawing path, two ids, so the
+  screen keeps the difference and `stub_apply` can tell them apart without the `xoff` record.
+* **The layout never sees it**: `area_adjacency` drops exits that leave the area, as it
+  already did for the off-map links. The export draws it as a stub and names no "(to …)".
+* **Three traps found by the test, all in the hand-over from link to edge.** A custom line on
+  an exit REPLACES Mudlet's drawing of that exit, so a half-line left on the slot after the
+  real edge arrived showed the corridor as a stub: `stub_apply` removes our grey line from
+  every real direction, and `onRoom` calls it for the departing room when the walked direction
+  was a frontier link. That same link looked to `off_record` like "a real edge already leads
+  there" and refused the off-map mark, and to the edge write like a destination change, i.e.
+  a maze mutation; both now treat the placeholder as no edge, as the off-map guard does.
+* Still derived from `xcomp`: `mapstubs off/on` unlink and relink, nothing is lost.
+
 `mapstep` replays a relayout frame by frame from the snapshots `step_snap` records under
 `stepDebug`; each frame carries the closure trace and the lever options that were ranked, in the
 same colours as the collision dump.
@@ -505,7 +530,61 @@ supplies resizing, the lock styles and the save file.
   zero-size `createMapper` before anything is built; on a refusal the automatic open does
   nothing and leaves the docked Map alone, and a typed `mapwin` prints Mudlet's reason and
   the restart that changes over.
- that are easy to break
+
+**2026-09-23: the default became Mudlet's own map widget, the embedded window is `mapwin
+embed`.** The embedded window lost console paints: whole rows of the text never drawn, then
+scrolled up as blank lines, since Mudlet scrolls by copying pixels and paints only the new
+rows. It happened in single view too, without any map write, and (once, then confirmed) with
+`mapview` as well, a plain label; never with the docked map, never with another package's
+gauges. What both our overlays did that the gauges do not: a large repaint fired synchronously
+from inside the `!MAP` trigger, while the console was still painting the very chunk the room
+text arrived in. Both are now deferred 50 ms (`mapview_refresh` collapses bursts;
+`recenter` defers `centerview` only while the embedded window is up). Re-applying the
+mapper's geometry every second (`refit`) was tried first on the theory that the widget had
+drifted; it changed nothing and stays as harmless insurance.
+
+* **One map widget per profile.** Once `createMapper` has put it inside our label,
+  `openMapWidget` silently does nothing until Mudlet restarts, the mirror of the refusal
+  above. `mapwin` says so when the embedded box exists in this session; `mapwin embed` gets
+  the older message after the dock has been used. Neither can be worked around from Lua.
+* The docked map is placed and remembered by Mudlet; no corner pin, no `pane_width`. First
+  install opens it once (marker file `elro_export/.mapwin_seen`). There is no close event,
+  so a close via the Map button leaves our toggle believing it open; one extra `mapwin`.
+* `openMapWidget(x, y, w, h)` places a top-level floating window in screen coordinates,
+  which Lua cannot compute (no main-window position API), so it is called bare.
+
+### The map view (view.lua): a prototype
+
+`mapview` shows the export's drawing of the map you stand on in a second window. It exists
+because the SVG looks better than Mudlet's canvas, and the question is whether an in-game view
+of our own rendering is worth pursuing. It is an addition beside Mudlet's mapper, not a
+replacement: `getPath`, the area tabs, selection and the right-click menu all live in the
+mapper, and drawing on its canvas is not possible from Lua.
+
+* **A `Geyser.Label` with the SVG as its `border-image`.** Qt renders SVG natively (the
+  `qsvg` image plugin ships with Mudlet) and `border-image` stretches the picture to the
+  label. The SVG is written at twice the label's size so it is crisp on a high-DPI screen and
+  the downscale stays smooth; its `viewBox` with `preserveAspectRatio="xMidYMid meet"` does
+  the letterboxing, so a click maps back through one known transform.
+* **A fresh file every draw.** Qt caches an image by its path (with the file's time and
+  size), and a move that only shifts the red ring writes a file of the same size within the
+  same millisecond. `view_<n>.svg` in `<profile>/elro_export/`; the file before last is
+  removed once the new one is surely loaded.
+* **The body is cached, the mark is not.** `export_draw` (shared with `mapexport`) builds
+  the area's drawing once per `cs_token`; a move appends the ring and the header. On
+  world_new (919 rooms) the body is 5 ms and the file 156 KB; Qt's re-parse per move is the
+  cost still to be measured live.
+* **Zoom is the viewBox.** `viewPx` screen pixels per cell, centred on the player; `fit`
+  (0) shows the whole map. The wheel scales by 1.25 a notch between 4 and 80 px.
+* **Click to walk** goes through `elro.gotoRoom`, so `mapavoid` and the walk watchdog
+  apply. The whole cell is the target, not the 0.72 box.
+* Redrawn from `elro.recenter`: every move, and with `always` (a relayout's end) the body
+  is rebuilt. Off the map the last picture stays and the ring goes.
+* Not done, and what the mapper gives for free: pan by drag, hover names, selection, area
+  tabs, the corner pin of `mapwin` (this window is only dragged and saved). Also open: the
+  window is not rebuilt at load after a restart, `mapview` is typed again.
+
+## 9. Contracts that are easy to break
 
 - **Key text is a layout contract.** `keys.lua`'s formats are index keys, trace labels and the
   final tie-break in `_rank_cands`. Changing a key's text changes layouts; A/B it as one.

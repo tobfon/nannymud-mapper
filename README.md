@@ -70,6 +70,13 @@ separate floors. Areas too small to deserve a tab fold into the world map.
 
 It relayouts as you explore, in the background, without freezing the client.
 
+`mapmark bank` remembers the room you are in; from then on typing `bank` walks there. A bare
+`mapmark` remembers "here" and `mapreturn` walks back: mark, go and sell, return. Marks are
+kept in the map. Unexplored exits are drawn as short grey half-lines rather than Mudlet's
+stubs, which it repaints every frame, so a big half-explored area stays fast. `mapview` is a
+prototype second window that draws the map you are on in the style of `mapexport`, with a ring
+for you and click-to-walk.
+
 `mapexport` writes the map you are standing on as a picture: white, with pale terrain tints,
 every room numbered, and a list of the rooms with where each way off the map leads. It is an
 SVG, which any browser opens and a wiki can show. `mapexport a4` fits the same drawing on one

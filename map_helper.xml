@@ -48,27 +48,6 @@ elro.onRoom(
 				</regexCodePropertyList>
 			</Trigger>
 			<Trigger isActive="yes" isFolder="no" isTempTrigger="no" isMultiline="no" isPerlSlashGOption="no" isColorizerTrigger="no" isFilterTrigger="no" isSoundTrigger="no" isColorTrigger="no" isColorTriggerFg="no" isColorTriggerBg="no">
-				<name>!MAPSEQ Command Fence</name>
-				<script>if not elro.fenceShow then deleteLine() end
-elro.onSeq(tonumber(matches[2]), matches[3] or "")</script>
-				<triggerType>0</triggerType>
-				<conditonLineDelta>0</conditonLineDelta>
-				<mStayOpen>0</mStayOpen>
-				<mCommand></mCommand>
-				<packageName></packageName>
-				<mFgColor>#ff0000</mFgColor>
-				<mBgColor>#ffff00</mBgColor>
-				<mSoundFile></mSoundFile>
-				<colorTriggerFgColor>#000000</colorTriggerFgColor>
-				<colorTriggerBgColor>#000000</colorTriggerBgColor>
-				<regexCodeList>
-					<string>(?:^|&gt; )!MAPSEQ (\d+) ?(.*)$</string>
-				</regexCodeList>
-				<regexCodePropertyList>
-					<integer>1</integer>
-				</regexCodePropertyList>
-			</Trigger>
-			<Trigger isActive="yes" isFolder="no" isTempTrigger="no" isMultiline="no" isPerlSlashGOption="no" isColorizerTrigger="no" isFilterTrigger="no" isSoundTrigger="no" isColorTrigger="no" isColorTriggerFg="no" isColorTriggerBg="no">
 				<name>!MAP Off-Map Exit</name>
 				<script>deleteLine()
 elro.onOff(tonumber(matches[2]), matches[3])</script>
@@ -286,6 +265,34 @@ else say("walk watchdog: " .. (elro.walkWatchdog == false and "off" or tostring(
 				<regex>^mapunavoid(?:\s+(.+))?$</regex>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
+				<name>mapmark</name>
+				<script>elro.cmd_mark(matches[2])</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapmark(?:\s+(\S+))?$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapreturn</name>
+				<script>elro.cmd_return(matches[2])</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapreturn(?:\s+(\S+))?$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapunmark</name>
+				<script>elro.cmd_unmark(matches[2])</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapunmark\s+(\S+)$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapmarks</name>
+				<script>elro.cmd_marks()</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapmarks$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
 				<name>mapavoids</name>
 				<script>elro.cmd_avoid()</script>
 				<command></command>
@@ -304,7 +311,14 @@ else say("walk watchdog: " .. (elro.walkWatchdog == false and "off" or tostring(
 				<script>elro.mapwin(matches[2])</script>
 				<command></command>
 				<packageName></packageName>
-				<regex>^mapwin(?:\s+(reset|lock|unlock|left|right))?$</regex>
+				<regex>^mapwin(?:\s+(embed|reset|lock|unlock|left|right))?$</regex>
+			</Alias>
+			<Alias isActive="yes" isFolder="no">
+				<name>mapview</name>
+				<script>elro.mapview(matches[2])</script>
+				<command></command>
+				<packageName></packageName>
+				<regex>^mapview(?:\s+(fit|plain|reset|zoom\s+\d+))?$</regex>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>maptop</name>
