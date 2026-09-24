@@ -88,7 +88,7 @@ elro.current = 1
 alias_for("bank")[2]()
 eq(walked, 2, "typing the word walks to the mark")
 
--- The one-line loop: 'mapmark;mapreturn shop;z;mapreturn'. No !MAP has come back when the
+-- The one-line loop: 'mapmark;mapreturn shop;z;mapreturn'. No !NMP has come back when the
 -- second walk is asked for, so it must plan from the first walk's destination.
 elro.gotoRoom = realGoto
 local sent = {}
@@ -98,24 +98,66 @@ getPath = function(a, b)                        -- the straight corridor 1-2-3
   local step = a < b and 1 or -1
   local dir = a < b and "east" or "west"
   speedWalkDir, speedWalkPath = {}, {}
-  for r = a + step, b, step do speedWalkDir[#speedWalkDir + 1] = dir ; speedWalkPath[#speedWalkPath + 1] = r end
+  -- as Mudlet does: the ids come as STRINGS
+  for r = a + step, b, step do speedWalkDir[#speedWalkDir + 1] = dir ; speedWalkPath[#speedWalkPath + 1] = tostring(r) end
   return true
 end
 elro.smap = {}
 elro.current = 3 ; elro.cmd_mark("shop")
 elro.current = 1 ; elro.cmd_mark()               -- 'here' = 1, 'shop' = 3
+getRoomName = function(id) return "room " .. id end
+-- the whole walk goes out at once; the !NMPs only say where it got to
 elro.cmd_return("shop")
-eq(table.concat(sent, " "), "east east", "first walk: 1 to 3")
-eq(elro.walkTarget, 3, "...leaves its destination as the in-flight target")
+eq(table.concat(sent, " "), "east east", "first walk, 1 to 3: sent whole")
+eq(elro.walkTarget, 3, "...and its destination is remembered")
+-- 'mapmark here;shop;sell;mapreturn' on one line: the second walk is planned from
+-- the first's end and goes out at once, so it keeps its place in the order typed
+elro.cmd_return()                                -- back to 'here' = 1, planned from 3
+eq(table.concat(sent, " "), "east east west west", "...the second walk follows on at once")
+eq(elro.walkTarget, 1, "the new destination takes over")
+eq(#elro.walkQueue, 4, "east east west west queued")
+elro.current = 2 ; elro.walk_seen(2)
+elro.current = 3 ; elro.walk_seen(3)
+elro.current = 2 ; elro.walk_seen(2)
+eq(elro.walkAt, 3, "each !NMP counts a step")
+elro.current = 1 ; elro.walk_seen(1)
+eq(elro.walkQueue, nil, "arrived: the walk is gone")
+-- a mark that is the running walk's end: already on the way, nothing sent
+sent = {} ; said = {}
+elro.cmd_return("shop")
+elro.cmd_return("shop")
+eq(table.concat(sent, " "), "east east", "a walk to where the running one ends sends nothing more")
+eq(said[#said]:find("you are at 'shop'", 1, true) ~= nil, true, "...and says so")
+elro.current = 2 ; elro.walk_seen(2) ; elro.current = 3 ; elro.walk_seen(3)
+-- a push off the path: the burst is already at the server; the map says what happened
+elro.current = 1 ; sent = {} ; said = {}
+elro.cmd_return("shop")
+elro.current = 9 ; elro.walk_seen(9)             -- a !NMP for a room off the path
+eq(elro.walkQueue, nil, "pushed off the path: the walk is over")
+eq(said[#said]:find("stopped short", 1, true) ~= nil, true, "...and it says so")
+-- a walk that halts (a closed door): no !NMP, no word; a second later it no longer counts
+elro.current = 1 ; sent = {} ; said = {}
+elro.cmd_return("shop")
+elro.current = 2 ; elro.walk_seen(2)
+eq(#said, 0, "halted: nothing is said")
+eq(elro.walk_busy(), true, "...but it still counts as running")
+elro.walkLast = elro.now_ms() - 1100
+eq(elro.walk_busy(), false, "a second without a !NMP: it does not")
 sent = {}
-elro.cmd_return()                                -- still 'at' 1 as far as the map knows
-eq(table.concat(sent, " "), "west west", "second walk is planned from the first's end")
-eq(elro.walkTarget, 1, "...and takes over the target")
-elro.current = 3                                 -- the !MAPs arrive: not the target yet
-eq(elro.walk_origin(), 1, "an arrival short of the target keeps the origin")
-elro.walkTarget = nil                            -- as onRoom does on arriving at it
-elro.current = 1
-eq(elro.walk_origin(), 1, "arrived: the origin is the room again")
+elro.cmd_return("shop")                          -- a new walk replaces the old
+eq(table.concat(sent, " "), "east", "...planned from where we are, at once")
+eq(elro.walkAt, 0, "...as a fresh walk")
+elro.walkQueue, elro.walkTarget, elro.walkPath = nil, nil, nil
+-- off the map: the last mapped room is not where we are
+elro.current = 1 ; elro.offmap = 1 ; sent = {} ; said = {}
+elro.cmd_mark("nowhere")
+eq(said[#said]:find("off the map", 1, true) ~= nil, true, "a mark off the map is refused")
+eq(elro.mark_find("nowhere"), nil, "...and not set")
+elro.cmd_return("shop")
+eq(#sent, 0, "a walk from off the map sends nothing")
+eq(said[#said]:find("off the map", 1, true) ~= nil, true, "...and says why")
+elro.offmap = nil
+elro.current = 1                                 -- back at 'here' for the checks below
 sent = {}
 elro.cmd_return()
 eq(#sent, 0, "at 'here' with no walk in flight: nothing sent")

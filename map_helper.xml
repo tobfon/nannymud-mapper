@@ -18,18 +18,9 @@
 			<regexCodeList />
 			<regexCodePropertyList />
 			<Trigger isActive="yes" isFolder="no" isTempTrigger="no" isMultiline="no" isPerlSlashGOption="no" isColorizerTrigger="no" isFilterTrigger="no" isSoundTrigger="no" isColorTrigger="no" isColorTriggerFg="no" isColorTriggerBg="no">
-				<name>!MAP Data Parser</name>
+				<name>!NMP line</name>
 				<script>deleteLine()
-elro.onRoom(
-  tonumber(matches[2]),
-  tonumber(matches[3]),
-  matches[4],
-  matches[5],
-  matches[6],
-  matches[7],
-  matches[8],
-  matches[9],
-  matches[10])</script>
+elro.nmp_line(matches[2])</script>
 				<triggerType>0</triggerType>
 				<conditonLineDelta>0</conditonLineDelta>
 				<mStayOpen>0</mStayOpen>
@@ -41,28 +32,7 @@ elro.onRoom(
 				<colorTriggerFgColor>#000000</colorTriggerFgColor>
 				<colorTriggerBgColor>#000000</colorTriggerBgColor>
 				<regexCodeList>
-					<string>^!MAP id=(\d+)\|from=(\d+)(?:\|dir=([^|]+))?\|name=([^|]+)\|area=([^|]+)\|exits=([^|]*)(?:\|terr=([^|\r\n]*))?(?:\|mha=([^|\r\n]+))?(?:\|mh=([^|\r\n]+))?\s*$</string>
-				</regexCodeList>
-				<regexCodePropertyList>
-					<integer>1</integer>
-				</regexCodePropertyList>
-			</Trigger>
-			<Trigger isActive="yes" isFolder="no" isTempTrigger="no" isMultiline="no" isPerlSlashGOption="no" isColorizerTrigger="no" isFilterTrigger="no" isSoundTrigger="no" isColorTrigger="no" isColorTriggerFg="no" isColorTriggerBg="no">
-				<name>!MAP Off-Map Exit</name>
-				<script>deleteLine()
-elro.onOff(tonumber(matches[2]), matches[3])</script>
-				<triggerType>0</triggerType>
-				<conditonLineDelta>0</conditonLineDelta>
-				<mStayOpen>0</mStayOpen>
-				<mCommand></mCommand>
-				<packageName></packageName>
-				<mFgColor>#ff0000</mFgColor>
-				<mBgColor>#ffff00</mBgColor>
-				<mSoundFile></mSoundFile>
-				<colorTriggerFgColor>#000000</colorTriggerFgColor>
-				<colorTriggerBgColor>#000000</colorTriggerBgColor>
-				<regexCodeList>
-					<string>^!MAP id=0\|from=(\d+)(?:\|dir=([^|\r\n]+))?\s*$</string>
+					<string>^!NMP (.+)$</string>
 				</regexCodeList>
 				<regexCodePropertyList>
 					<integer>1</integer>
@@ -80,14 +50,14 @@ elro.onOff(tonumber(matches[2]), matches[3])</script>
 			<regex></regex>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapgoto</name>
-				<script>elro.goto_target(matches[2])</script>
+				<script>elro.with_rest(matches[2], elro.goto_target)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^mapgoto (.+)$</regex>
 				</Alias>
 				<Alias isActive="yes" isFolder="no">
 					<name>mapnear</name>
-					<script>elro.map_near(matches[2])</script>
+					<script>elro.with_rest(matches[2], elro.map_near)</script>
 					<command></command>
 					<packageName></packageName>
 					<regex>^mapnear ?(.*)$</regex>
@@ -102,14 +72,14 @@ elro.rec_start(a)</script>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>maphelp</name>
-				<script>elro.map_help(matches[2])</script>
+				<script>elro.with_rest(matches[2], elro.map_help)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^maphelp(?:\s+(\S+))?$</regex>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapwipe</name>
-				<script>elro.map_wipe(matches[2])</script>
+				<script>elro.with_rest(matches[2], elro.map_wipe)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^mapwipe(?:\s+(.+))?$</regex>
@@ -171,28 +141,28 @@ elro.relayout_this()</script>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapcur</name>
-				<script>elro.set_current(matches[2])</script>
+				<script>elro.with_rest(matches[2], elro.set_current)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^mapcur (.+)$</regex>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>maphints</name>
-				<script>elro.cmd_hints(matches[2])</script>
+				<script>elro.with_rest(matches[2], elro.cmd_hints)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^maphints(?:\s+(.+))?$</regex>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapupdate</name>
-				<script>elro.cmd_update(matches[2])</script>
+				<script>elro.with_rest(matches[2], elro.cmd_update)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^mapupdate(?:\s+(.+))?$</regex>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapoff</name>
-				<script>elro.cmd_off(matches[2])</script>
+				<script>elro.with_rest(matches[2], elro.cmd_off)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^mapoff(?:\s+(\d+))?$</regex>
@@ -206,7 +176,7 @@ elro.relayout_this()</script>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapecho</name>
-				<script>elro.cmd_mapecho(matches[2])</script>
+				<script>elro.with_rest(matches[2], elro.cmd_mapecho)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^mapecho(?:\s+(.*))?$</regex>
@@ -238,49 +208,49 @@ else say("walk watchdog: " .. (elro.walkWatchdog == false and "off" or tostring(
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapvert</name>
-				<script>elro.vert_report(matches[2])</script>
+				<script>elro.with_rest(matches[2], elro.vert_report)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^mapvert(?:\s+(.+))?$</regex>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapexport</name>
-				<script>elro.cmd_export(matches[2])</script>
+				<script>elro.with_rest(matches[2], elro.cmd_export)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^mapexport(?:\s+(.+))?$</regex>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapavoid</name>
-				<script>elro.cmd_avoid(matches[2], true)</script>
+				<script>elro.with_rest(matches[2], elro.cmd_avoid, true)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^mapavoid(?:\s+(.+))?$</regex>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapunavoid</name>
-				<script>elro.cmd_avoid(matches[2], false)</script>
+				<script>elro.with_rest(matches[2], elro.cmd_avoid, false)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^mapunavoid(?:\s+(.+))?$</regex>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapmark</name>
-				<script>elro.cmd_mark(matches[2])</script>
+				<script>elro.with_rest(matches[2], elro.cmd_mark)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^mapmark(?:\s+(\S+))?$</regex>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapreturn</name>
-				<script>elro.cmd_return(matches[2])</script>
+				<script>elro.with_rest(matches[2], elro.cmd_return)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^mapreturn(?:\s+(\S+))?$</regex>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapunmark</name>
-				<script>elro.cmd_unmark(matches[2])</script>
+				<script>elro.with_rest(matches[2], elro.cmd_unmark)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^mapunmark\s+(\S+)$</regex>
@@ -308,21 +278,21 @@ else say("walk watchdog: " .. (elro.walkWatchdog == false and "off" or tostring(
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapwin</name>
-				<script>elro.mapwin(matches[2])</script>
+				<script>elro.with_rest(matches[2], elro.mapwin)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^mapwin(?:\s+(embed|reset|lock|unlock|left|right))?$</regex>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapview</name>
-				<script>elro.mapview(matches[2])</script>
+				<script>elro.with_rest(matches[2], elro.mapview)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^mapview(?:\s+(fit|plain|reset|zoom\s+\d+))?$</regex>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>maptop</name>
-				<script>elro.dump_steptop(matches[2])</script>
+				<script>elro.with_rest(matches[2], elro.dump_steptop)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^maptop(?:\s+(\d+))?$</regex>
@@ -343,14 +313,14 @@ else say("walk watchdog: " .. (elro.walkWatchdog == false and "off" or tostring(
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapstep</name>
-				<script>elro.dump_step(matches[2])</script>
+				<script>elro.with_rest(matches[2], elro.dump_step)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^mapstep(?:\s+(back|off|reset|step\s+\d+|\d+))?$</regex>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapareamin</name>
-				<script>elro.set_areamin(tonumber(matches[2]))</script>
+				<script>elro.with_rest(matches[2], function(a) elro.set_areamin(tonumber(a)) end)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^mapareamin (\d+)$</regex>
@@ -546,14 +516,14 @@ cecho("\n")</script>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapsteal</name>
-				<script>elro.steal_rooms(matches[2])</script>
+				<script>elro.with_rest(matches[2], elro.steal_rooms)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^mapsteal ([\d ,]+)$</regex>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapunsteal</name>
-				<script>elro.unsteal_rooms(matches[2])</script>
+				<script>elro.with_rest(matches[2], elro.unsteal_rooms)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^mapunsteal ([\d ,]+)$</regex>
@@ -577,63 +547,63 @@ cecho("\n")</script>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapouter</name>
-				<script>elro.outer_pick(matches[2])</script>
+				<script>elro.with_rest(matches[2], elro.outer_pick)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^mapouter ?(.*)$</regex>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>maplever</name>
-				<script>elro.map_lever(matches[2])</script>
+				<script>elro.with_rest(matches[2], elro.map_lever)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^maplever ?(.*)$</regex>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapedges</name>
-				<script>elro.list_edges(tonumber(matches[2]))</script>
+				<script>elro.with_rest(matches[2], function(a) elro.list_edges(tonumber(a)) end)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^mapedges(?:\s+(\d+))?$</regex>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapexitlock</name>
-					<script>elro.exit_lock(matches[2])</script>
+					<script>elro.with_rest(matches[2], elro.exit_lock)</script>
 					<command></command>
 					<packageName></packageName>
 					<regex>^mapexitlock(?:\s+(\S+))?$</regex>
 				</Alias>
 				<Alias isActive="yes" isFolder="no">
 					<name>mapexitunlock</name>
-					<script>elro.exit_unlock(matches[2])</script>
+					<script>elro.with_rest(matches[2], elro.exit_unlock)</script>
 					<command></command>
 					<packageName></packageName>
 					<regex>^mapexitunlock(?:\s+(\S+))?$</regex>
 				</Alias>
 				<Alias isActive="yes" isFolder="no">
 					<name>mapmut</name>
-					<script>elro.show_mut(matches[2])</script>
+					<script>elro.with_rest(matches[2], elro.show_mut)</script>
 					<command></command>
 					<packageName></packageName>
 					<regex>^mapmut(?:\s+(\d+))?$</regex>
 				</Alias>
 				<Alias isActive="yes" isFolder="no">
 					<name>mapmutreset</name>
-					<script>elro.mut_reset(matches[2])</script>
+					<script>elro.with_rest(matches[2], elro.mut_reset)</script>
 					<command></command>
 					<packageName></packageName>
 					<regex>^mapmutreset(?:\s+(\S+))?$</regex>
 				</Alias>
 				<Alias isActive="yes" isFolder="no">
 					<name>mapmaze</name>
-					<script>elro.cmd_maze(matches[2])</script>
+					<script>elro.with_rest(matches[2], elro.cmd_maze)</script>
 					<command></command>
 					<packageName></packageName>
 					<regex>^mapmaze(?:\s+(.+))?$</regex>
 				</Alias>
 				<Alias isActive="yes" isFolder="no">
 					<name>mapunmaze</name>
-					<script>elro.cmd_unmaze(matches[2])</script>
+					<script>elro.with_rest(matches[2], elro.cmd_unmaze)</script>
 					<command></command>
 					<packageName></packageName>
 					<regex>^mapunmaze ?(.*)$</regex>
@@ -647,49 +617,49 @@ cecho("\n")</script>
 				</Alias>
 				<Alias isActive="yes" isFolder="no">
 					<name>mapmazelive</name>
-					<script>elro.cmd_maze_live(matches[2])</script>
+					<script>elro.with_rest(matches[2], elro.cmd_maze_live)</script>
 					<command></command>
 					<packageName></packageName>
 					<regex>^mapmazelive ?(.*)$</regex>
 				</Alias>
 				<Alias isActive="yes" isFolder="no">
 					<name>mapmazefit</name>
-					<script>elro.cmd_maze_fit(matches[2])</script>
+					<script>elro.with_rest(matches[2], elro.cmd_maze_fit)</script>
 					<command></command>
 					<packageName></packageName>
 					<regex>^mapmazefit ?(.*)$</regex>
 				</Alias>
 				<Alias isActive="yes" isFolder="no">
 					<name>mapstubs</name>
-					<script>elro.cmd_stubs(matches[2])</script>
+					<script>elro.with_rest(matches[2], elro.cmd_stubs)</script>
 					<command></command>
 					<packageName></packageName>
 					<regex>^mapstubs ?(.*)$</regex>
 				</Alias>
 				<Alias isActive="yes" isFolder="no">
 					<name>mapprofile</name>
-					<script>elro.cmd_profile(matches[2])</script>
+					<script>elro.with_rest(matches[2], elro.cmd_profile)</script>
 					<command></command>
 					<packageName></packageName>
 					<regex>^mapprofile ?(.*)$</regex>
 				</Alias>
 				<Alias isActive="yes" isFolder="no">
 					<name>mapglyphs</name>
-					<script>elro.cmd_glyphs(matches[2])</script>
+					<script>elro.with_rest(matches[2], elro.cmd_glyphs)</script>
 					<command></command>
 					<packageName></packageName>
 					<regex>^mapglyphs(?:\s+(.+))?$</regex>
 				</Alias>
 				<Alias isActive="yes" isFolder="no">
 					<name>mapterrain</name>
-					<script>elro.cmd_terrain(matches[2])</script>
+					<script>elro.with_rest(matches[2], elro.cmd_terrain)</script>
 					<command></command>
 					<packageName></packageName>
 					<regex>^mapterrain(?:\s+(.+))?$</regex>
 				</Alias>
 				<Alias isActive="yes" isFolder="no">
 					<name>mapaudit</name>
-					<script>elro.cmd_audit(matches[2])</script>
+					<script>elro.with_rest(matches[2], elro.cmd_audit)</script>
 					<command></command>
 					<packageName></packageName>
 					<regex>^mapaudit ?(.*)$</regex>
@@ -711,7 +681,7 @@ else elro.delete_room(tonumber(matches[2])) end</script>
 			</Alias>
 			<Alias isActive="yes" isFolder="no">
 				<name>mapsearch</name>
-				<script>elro.search_rooms(matches[2])</script>
+				<script>elro.with_rest(matches[2], elro.search_rooms)</script>
 				<command></command>
 				<packageName></packageName>
 				<regex>^mapsearch (.+)$</regex>
@@ -780,7 +750,7 @@ function elro.load_modules()
       cecho("\n&lt;red&gt;[elro] FAILED to load " .. path .. ":&lt;reset&gt; " .. tostring(err) .. "\n")
     end
   end
-  cecho(string.format("\n&lt;green&gt;[elro] ElrohirMapper %s loaded%s. 'maphelp' is this client's help; in the game it is 'help maplink'.&lt;reset&gt;\n",
+  cecho(string.format("\n&lt;green&gt;[elro] ElrohirMapper %s loaded%s. 'maphelp' is this client's help; in the game it is 'help nmp'.&lt;reset&gt;\n",
         tostring(elro.VERSION or "?"),
         failed &gt; 0 and (" with " .. failed .. " module(s) FAILED") or ""))
   -- AND DROP THE C-SPACE SNAPSHOT. `elro` survives a reload on purpose, so

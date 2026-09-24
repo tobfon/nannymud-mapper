@@ -1,6 +1,6 @@
 # ElrohirMapper client — design
 
-The Mudlet side of the `!MAP` mapper: it receives room announcements from the server, keeps
+The Mudlet side of the NMP mapper (NannyMUD Map Protocol, the `!NMP` line): it receives room announcements from the server, keeps
 Mudlet's room database as the graph store, and computes every area's coordinates itself. The
 server side and the wire protocol are described in [../DESIGN.md](../DESIGN.md); this document
 covers only what lives under `client/`.
@@ -16,7 +16,7 @@ module never needs a package reinstall. Offline harnesses loop over the same lis
 |---|---|
 | `geom.lua` | pure (x,y) primitives: orientation, edge raster, strict segment crossing |
 | `keys.lua` | the string formats naming an edge, a crossing, a room-on-edge incidence |
-| `core.lua` | the driver: `!MAP` feed (`onRoom`), the c-space snapshot, regionalisation, the relayout loop and background coroutine, the write gate, aliases, glyphs, terrain, mazes |
+| `core.lua` | the driver: `!NMP` feed (`onRoom`), the c-space snapshot, regionalisation, the relayout loop and background coroutine, the write gate, aliases, glyphs, terrain, mazes |
 | `tune.lua` | `TUNE`, the engine's numeric constants |
 | `canvas.lua` | area adjacency, the flood layout (fallback), composition of an area from its components, orphans, the defect scanner, the write path |
 | `audit.lua` | exit provenance and the constraint audit: which exits are trustworthy, which get demoted |
@@ -46,7 +46,7 @@ when they were extracted); it costs a few dozen table stores per call.
 ## 2. The pipeline, end to end
 
 ```
-server !MAP line
+server !NMP line
   -> core.onRoom            create/enrich rooms + exits in Mudlet; invalidate the snapshot; markDirty
   -> core.relayout          (idle-debounced, or urgent on an overlap) per dirty area:
        core.recompute_areas   fold small server areas into "world"; honour steals/merges/mazes
@@ -66,9 +66,17 @@ server !MAP line
   -> core.relayout_done     re-run if the graph moved meanwhile (level-triggered, spin-guarded)
 ```
 
+**The line is parsed as pairs** (2.0.0, `nmp_line`, `nmp_fields`): `key=value`
+joined by `|`, any order, unknown keys ignored, `id=0` dispatched to `onOff` and
+the rest to `onRoom`. One trigger, `^!NMP (.+)$`, replaces the two anchored
+regular expressions of 1.x, which failed to match the moment the server added a
+field; a new field now reaches an old client as nothing. The protocol was named
+and the prefix changed from `!MAP` while nobody but the testers had a client, so
+no old client is kept working. `analysis/test_nmp.lua` covers the parser.
+
 **The captured command.** The server reads every command as the parser ran it
 (`query_verb()` plus `query_verb_args()`) and sends it as the
-`!MAP` line's `dir` for the player's own moves and party follows. A non-compass
+`!NMP` line's `dir` for the player's own moves and party follows. A non-compass
 `dir` is therefore a replayable command and `onRoom` records it as the edge
 command (the same store `maprecordmove` writes, first-writer wins), which is what
 makes `climb mountain` replayable without recording it by hand. The server never
@@ -116,7 +124,7 @@ its own suggestion, so a line without the field clears what was stored.
 have opened, and a move into anything else used to send nothing, so such an exit
 stayed a stub for ever: indistinguishable from one not yet walked, and counted
 toward `stubHaloMin`, which let a town full of closed doors engage the halo and
-hide its real frontier. The server now sends `!MAP id=0|from=<id>|dir=<dir>` for
+hide its real frontier. The server now sends `!NMP id=0|from=<id>|dir=<dir>` for
 such a move. `onOff` records the direction
 in the room's `xoff` userdata and **links the exit to the placeholder room**
 (`elro.OFF_ROOM`, in the "off the map" area, see below). That makes it an
@@ -163,7 +171,7 @@ relayout finishing while the player is away cannot snap the view back.
 `elro.current` is deliberately NOT cleared: it anchors the stub halo, and nil
 there makes `stub_halo_update` resync every stub on the map at each step off it.
 Any `onRoom` ends the excursion. The server also sends the bare form
-`!MAP id=0|from=0` for a login or teleport into unmapped space, so a session that
+`!NMP id=0|from=0` for a login or teleport into unmapped space, so a session that
 starts there does not show the player where the last one ended.
 
 The markers are NOT gated on the client's version. They briefly were (sent only
@@ -172,7 +180,7 @@ a feature depend on state kept in two places: the link forgets the client at
 every login while the client remembered having said hello for the whole Mudlet
 session, so a relog silently switched the markers off. 1.0.0 had no users, so
 the gate went. The ack itself is still re-sent after a reload or a reconnect,
-and by `mapack`, because the version notice and `maplink`'s status use it.
+and by `mapack`, because the version notice and `nmp`'s status use it.
 
 **The command fence (`!MAPSEQ`) is gone** (1.5.0, 2026-09-23): the server
 reads the typed command from the driver itself now, so `onSeq`, `fence_take`,
@@ -537,7 +545,7 @@ scrolled up as blank lines, since Mudlet scrolls by copying pixels and paints on
 rows. It happened in single view too, without any map write, and (once, then confirmed) with
 `mapview` as well, a plain label; never with the docked map, never with another package's
 gauges. What both our overlays did that the gauges do not: a large repaint fired synchronously
-from inside the `!MAP` trigger, while the console was still painting the very chunk the room
+from inside the `!NMP` trigger, while the console was still painting the very chunk the room
 text arrived in. Both are now deferred 50 ms (`mapview_refresh` collapses bursts;
 `recenter` defers `centerview` only while the embedded window is up). Re-applying the
 mapper's geometry every second (`refit`) was tried first on the theory that the widget had
@@ -547,9 +555,13 @@ drifted; it changed nothing and stays as harmless insurance.
   `openMapWidget` silently does nothing until Mudlet restarts, the mirror of the refusal
   above. `mapwin` says so when the embedded box exists in this session; `mapwin embed` gets
   the older message after the dock has been used. Neither can be worked around from Lua.
-* The docked map is placed and remembered by Mudlet; no corner pin, no `pane_width`. First
-  install opens it once (marker file `elro_export/.mapwin_seen`). There is no close event,
-  so a close via the Map button leaves our toggle believing it open; one extra `mapwin`.
+* The docked map is placed and remembered by Mudlet; no corner pin, no `pane_width`. Its
+  open state is NOT remembered by Mudlet (found 2026-09-24: every start came up closed once
+  the first-install marker `elro_export/.mapwin_seen` existed), so the client opens it at
+  every start unless the player closed it with `mapwin`, which leaves
+  `elro_export/.mapwin_closed` until the next `mapwin`. There is no close event, so a close
+  via the Map button leaves our toggle believing it open and is reopened at the next start;
+  one extra `mapwin`.
 * `openMapWidget(x, y, w, h)` places a top-level floating window in screen coordinates,
   which Lua cannot compute (no main-window position API), so it is called bare.
 
@@ -583,6 +595,71 @@ mapper, and drawing on its canvas is not possible from Lua.
 * Not done, and what the mapper gives for free: pan by drag, hover names, selection, area
   tabs, the corner pin of `mapwin` (this window is only dragged and saved). Also open: the
   window is not rebuilt at load after a restart, `mapview` is typed again.
+
+### Marks and the walk in flight (core.lua, 2026-09-23)
+
+`mapmark bank` stores the room you stand in under a name, in the map's own user
+data so it travels with the map file, and registers the name as a temporary
+alias: typing `bank` is `mapgoto` to it. A bare `mapmark` stores "here", and
+`mapreturn` walks back to it: mark, go and sell, return. `mapmarks` lists,
+`mapunmark` forgets and frees the word.
+
+Walks are planned with Mudlet's `getPath` from the room the last `!NMP` named
+and sent as one burst, as they always were. Position is only ever what the
+server said. The walk remembers the rooms its path passes (`walk_steps`) so
+that a `!NMP` for a room not on it, a push or a fall, can say once "the walk
+stopped short of <room>" (`walk_seen`); a walk that merely halts at a closed
+door says nothing, and arriving is silent.
+
+A walk asked for while one is still running is planned from that one's end
+and sent at once, so that it keeps its place in the order the player typed.
+That is what makes `shop;green;groda` (two marks and a plain alias) work: three
+bursts leave in that order and the server runs them in that order. Waiting for
+the first walk's arrival before planning the second was tried on 2026-09-24 and
+is wrong for exactly this line: `groda`'s twenty commands do not wait, they
+queue straight behind `shop`, and `green`, planned on arrival, then runs from
+wherever `groda` left the player. The expected end is the plan's origin only,
+never a position: position, the marks and "you are at" read `!NMP` alone, and a
+walk to the room the running walk already ends in sends nothing. Off the map
+(`elro.offmap`, between the off-map marker and the next mapped `!NMP`) a mark
+and a walk are both refused: the last mapped room is not where the player is.
+
+(Every alias with a free argument runs it through `with_rest`: Mudlet matches
+an alias against the whole typed line before it splits on the command
+separator, so `mapgoto (.+)` took `13 ;mapreturn` as one argument. The helper
+cuts at the profile's own separator (`getCommandSeparator()`, `;;` by default),
+runs our command with the head and hands the rest to `expandAlias`: when the
+separator is in the argument, Mudlet did not split the line and we are the
+only executor. A bare `;` that is not the separator means a script of the
+player's is already running the parts, so the whole-line match does nothing;
+cutting there too ran every chained walk twice, once from the script and once
+from us. `text`, not `arg`, as the parameter: Lua 5.1, which Mudlet runs,
+gives a vararg function an implicit local named `arg` that shadows a parameter
+of that name; the LuaJIT harness does not, and passed the broken version.) A
+walk counts as running from its burst until its last `!NMP`, or until a second
+has passed with none (`walkQuietSecs`): a burst lands one every fraction of a
+second, so a second of silence is the walk over at a door or a wall, and a walk
+asked for after that is planned from where the player is. No clock runs in the
+walk at all; the window is read when a walk is asked for.
+
+What 1.5.1 fixed and what it tried on the way (2026-09-24). 1.5.0 kept a
+walk's destination as the origin for later walks for a minute after sending,
+cleared only by arriving, so a walk cut short left every later walk planned
+from a room never reached and a mark there said "you are at". The fix went
+through three shapes before this one, all dropped by the user: ending the walk
+by counting telnet GA prompts (it stopped after one step, which was blamed on
+GA and was in fact the string room ids below; GA arrives only after prompts,
+verified with a prompt trigger 2026-09-24); one step at a
+time on each `!NMP`, then two in flight, so a push could not run the rest of
+the burst from the wrong room (safer, and slower to the hand than the burst);
+and a three-second timer for a step with no `!NMP` (annoying when the mud was
+merely slow). What survived is the rule above: position from `!NMP` alone. One
+real bug came out of the exercise: Mudlet fills `speedWalkPath` with the room
+ids as STRINGS (`"7240"`), the `!NMP` id is a number, and `"7240" == 7240` is
+false, so every landing read as a push; `walk_steps` now `tonumber`s the path
+once, and the test harness hands out strings as Mudlet does. Covered by
+`analysis/test_marks.lua`: a walk, a walk typed during one, the push, the
+halt.
 
 ## 9. Contracts that are easy to break
 

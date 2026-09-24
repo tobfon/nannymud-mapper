@@ -1,4 +1,5 @@
--- ElrohirMapper: standalone client mapper driven by the server !MAP protocol.
+-- ElrohirMapper: standalone client mapper driven by the server's NMP lines
+-- (NannyMUD Map Protocol, the !NMP feed).
 -- Mudlet's room database is the graph store: the feeder creates rooms/areas/exits,
 -- the layout engine reads the graph back per area, computes coordinates, and
 -- writes them with setRoomCoordinates. Speedwalk is native getPath.
@@ -9,7 +10,7 @@ elro.dirty = elro.dirty or {}     -- areaID -> true: needs relayout
 elro.ns_cap = elro.ns_cap or 5000  -- max rooms for the O(V^2 E) NS engine; above -> flood
 -- Reported to the server by the handshake in onRoom. Kept in step with config.lua's
 -- `version` by tools/build-package.sh, which refuses to build if the two differ.
-elro.VERSION = "1.5.0"
+elro.VERSION = "2.0.0"
 
 elro.relayout_timer = elro.relayout_timer or nil
 -- min internally-connected cluster size for a server-area to keep its own tab;
@@ -3022,7 +3023,7 @@ function elro.glyph_room(id)
   elro.glyph_paint(id, elro.glyph_char(id))
 end
 
--- mapreg_d._clean() caps every !MAP field at 64 chars; the eight compass names
+-- mapreg_d._clean() caps every !NMP field at 64 chars; the eight compass names
 -- alone are 60, so a busy room's exit list arrives with its tail chopped.
 elro.EXITS_CAP = 64
 
@@ -3116,7 +3117,7 @@ function elro.cmd_glyphs(arg)
 end
 
 -- ==== TERRAIN COLOURING ====
--- The server sends the room's terrain properties as the !MAP `terr` field. Stored raw as
+-- The server sends the room's terrain properties as the !NMP `terr` field. Stored raw as
 -- room user data; every colour is derived from it on repaint.
 
 if elro.terrainOn == nil then elro.terrainOn = true end
@@ -3709,7 +3710,7 @@ function elro.guess_inconsistent(id, aid, skip, only)
   return nil
 end
 
--- Main entry from the !MAP trigger, and the c-space snapshot's invalidation
+-- Main entry from the !NMP trigger, and the c-space snapshot's invalidation
 -- point. Every write is compared against the snapshot first (elro.cs_room) so
 -- walking known territory invalidates nothing; a write that changes something
 -- calls elro.cs_dirty, which forgets the record AND bumps the area version.
@@ -3864,7 +3865,7 @@ end
 
 -- ---- exits that leave the map ----------------------------------------------
 -- `xoff`: the compass exits the server said lead into a room it will not map
--- (`!MAP id=0`). Such an exit is not frontier, so it is no stub and does not
+-- (`!NMP id=0`). Such an exit is not frontier, so it is no stub and does not
 -- count toward the halo; it is drawn as the blue half-line of an area border.
 function elro.off_set(id)
   local out = {}
@@ -4465,7 +4466,7 @@ function elro.cmd_update(arg)
     elro.update_swap(arg) ; return
   end
   if type(downloadFile) ~= "function" then
-    cecho("\n<red>[elro]: this Mudlet cannot download; see 'maplink setup'.\n<reset>") return
+    cecho("\n<red>[elro]: this Mudlet cannot download; see 'nmp setup'.\n<reset>") return
   end
   local dir = getMudletHomeDir() .. "/elro_update"
   if lfs and lfs.mkdir then pcall(lfs.mkdir, dir) end
@@ -4499,8 +4500,31 @@ end
 function elro.cmd_ack()
   if type(send) ~= "function" then return end
   elro._ackSent = true
-  pcall(send, "maplink ack " .. tostring(elro.VERSION), false)
+  pcall(send, "nmp ack " .. tostring(elro.VERSION), false)
   cecho("\n<green>[elro]: told the link this is client " .. tostring(elro.VERSION) .. ".\n<reset>")
+end
+
+-- The !NMP line, as `key=value` pairs joined by `|`, in any order, keys the client
+-- does not know ignored: a field added on the server reaches an older client as
+-- nothing, not as a line that fails to match. id=0 is the off-map marker.
+function elro.nmp_fields(text)
+  local f = {}
+  for pair in string.gmatch(text or "", "[^|]+") do
+    local k, v = string.match(pair, "^%s*([%w_]+)=(.*)$")
+    if k then f[k] = (v:gsub("[\r\n]+$", "")) end
+  end
+  return f
+end
+
+function elro.nmp_line(text)
+  local f = elro.nmp_fields(text)
+  local id, from = tonumber(f.id), tonumber(f.from)
+  if not id then return end
+  if id == 0 then
+    if elro.onOff then elro.onOff(from or 0, f.dir) end
+    return
+  end
+  elro.onRoom(id, from, f.dir, f.name, f.area, f.exits, f.terr, f.mha, f.mh)
 end
 
 function elro.onRoom(id, fromId, dir, name, area, exits, terr, mha, mh)
@@ -4510,11 +4534,11 @@ function elro.onRoom(id, fromId, dir, name, area, exits, terr, mha, mh)
   if elro.profOn then elro._prof = {} ; _pfTotal = pf("total") end
   -- Handshake, once per session. The link streams whether or not anything is
   -- listening, so without this the game cannot tell a player whose client is
-  -- missing from one whose client is fine. Sent on the first !MAP line rather
+  -- missing from one whose client is fine. Sent on the first !NMP line rather
   -- than at load: Mudlet runs its scripts before the connection exists.
   if not elro._ackSent and type(send) == "function" then
     elro._ackSent = true
-    pcall(send, "maplink ack " .. tostring(elro.VERSION), false)
+    pcall(send, "nmp ack " .. tostring(elro.VERSION), false)
   end
   if dir == nil or dir == "" then dir = "none" end
   dir = elro.norm(dir)
@@ -4751,7 +4775,7 @@ function elro.onRoom(id, fromId, dir, name, area, exits, terr, mha, mh)
             tostring(armed) .. " but this move came from " ..
             ((fromId and fromId ~= 0) and tostring(fromId) or "an unknown room") ..
             ".\n<yellow>  Something moved you without telling the mapper " ..
-            "(a wizard's move_object emits no !MAP line), so the recorder was " ..
+            "(a wizard's move_object emits no !NMP line), so the recorder was " ..
             "pointing at a stale room.  You are in room " .. tostring(id) ..
             " now -- record again from here.\n<reset>")
     end
@@ -4784,7 +4808,7 @@ function elro.onRoom(id, fromId, dir, name, area, exits, terr, mha, mh)
     _pf()
   end
   elro.current = id
-  if elro.walkTarget == id then elro.walkTarget = nil end
+  elro.walk_seen(id)
   -- invalidate the snapshot for exactly the rooms written; a cross-area edge
   -- bumps both sides
   local _pfCs = pf("csdirty")
@@ -4871,6 +4895,36 @@ end
 function elro.has_special(from, to)
   for _, e in ipairs(elro.special_list(from)) do if e.to == to then return true end end
   return false
+end
+
+-- ---- alias arguments and the command separator -----------------------------
+-- Mudlet matches an alias against the whole typed line BEFORE it splits on the
+-- player's command separator, so a pattern ending in (.+) takes
+-- 'mapgoto 13;mapreturn' as one argument. Every alias with a free argument runs
+-- it through here: the part before the separator is ours, the rest goes back to
+-- Mudlet after our command has run. The separator is the player's setting.
+-- (`text`, not `arg`: Lua 5.1, which Mudlet runs, gives a vararg function an
+-- implicit local named `arg` that shadows a parameter of that name.)
+function elro.with_rest(text, fn, ...)
+  -- Cut only at the profile's own separator: when it is in the argument Mudlet did
+  -- not split the line and we are the only executor. A bare ";" that is NOT the
+  -- separator means a script of the player's (Mudlet's default is ";;") is
+  -- already running the parts, and the whole-line match would run them again.
+  local sep = type(getCommandSeparator) == "function" and getCommandSeparator() or nil
+  local rest
+  if text then
+    local i, j
+    if sep and sep ~= "" then i, j = string.find(text, sep, 1, true) end
+    if i then
+      rest = string.sub(text, j + 1)
+      text = string.sub(text, 1, i - 1)
+    elseif string.find(text, ";", 1, true) then
+      return
+    end
+    text = (text:gsub("^%s+", ""):gsub("%s+$", ""))
+  end
+  fn(text, ...)
+  if rest and rest:match("%S") and type(expandAlias) == "function" then expandAlias(rest, false) end
 end
 
 -- ---- manual edge recording (maprecordmove) --------------------------------
@@ -5021,15 +5075,49 @@ end
 function elro.walk_steps(dirs, path, from)
   if elro.smap == nil then elro.load_smap() end
   from = from or elro.current
+  -- one entry per step: the commands (a recorded edge may be several) and the room
+  -- they should land in
+  local steps = {}
   for i = 1, #dirs do
-    local to = path and path[i]
+    local to = path and tonumber(path[i])   -- Mudlet hands the ids out as STRINGS
     local seq = to and elro.smap[from .. ":" .. to]
-    if seq then
-      for _, cmd in ipairs(smap_split(seq)) do send(cmd) end
-    else
-      send(dirs[i])
-    end
+    steps[#steps + 1] = { cmds = seq and smap_split(seq) or { dirs[i] }, to = to }
     if to then from = to end
+  end
+  if #steps == 0 then return end
+  -- the walk in flight: its end and the rooms it passes, so a !NMP can say whether
+  -- a step landed or something else moved us. A walk asked for while one is
+  -- running was planned from that one's end (gotoRoom) and follows on: sent
+  -- NOW, so that anything the player typed after it stays behind it at the
+  -- server ('shop;green;groda' is three bursts in that order).
+  local q = elro.walkQueue
+  if elro.walk_busy() then
+    for _, st in ipairs(steps) do q[#q + 1] = st end
+  else
+    elro.walkQueue, elro.walkAt, elro.walkPath = steps, 0, {}
+  end
+  elro.walkTarget, elro.walkLast = steps[#steps].to, elro.now_ms()
+  for _, st in ipairs(steps) do if st.to then elro.walkPath[st.to] = true end end
+  for _, st in ipairs(steps) do for _, cmd in ipairs(st.cmds) do send(cmd) end end
+end
+
+-- Is a walk still running: sent, not arrived, and its !NMPs still coming. A burst
+-- lands one every fraction of a second, so a second of silence is the walk over
+-- (a closed door, a wall).
+elro.walkQuietSecs = elro.walkQuietSecs or 1
+function elro.walk_busy()
+  local q = elro.walkQueue
+  return q ~= nil and elro.walkAt < #q and elro.now_ms() - (elro.walkLast or 0) < elro.walkQuietSecs * 1000
+end
+
+-- The walk is over: arrived (quietly) or pushed off it (say where it was going).
+-- A walk that just halts (a closed door) says nothing; walk_busy stops counting it.
+function elro.walk_end(short)
+  local dest = elro.walkTarget
+  elro.walkQueue, elro.walkTarget, elro.walkPath = nil, nil, nil
+  if short and dest then
+    cecho("\n<yellow>[elro]: the walk stopped short of " .. (getRoomName(dest) or tostring(dest)) ..
+          " (room " .. tostring(dest) .. ").\n<reset>")
   end
 end
 
@@ -5166,6 +5254,9 @@ function elro.cmd_mark(arg)
   if not elro.current or not roomExists(elro.current) then
     cecho("\n<red>[elro]: current room unknown; move once first.\n<reset>") return
   end
+  if elro.offmap then
+    cecho("\n<red>[elro]: you are off the map; a mark needs a mapped room.\n<reset>") return
+  end
   local name = mark_name(arg)
   if not name:match("^[%w_]+$") then
     cecho("\n<red>[elro]: a mark is one word of letters and digits.\n<reset>") return
@@ -5193,7 +5284,9 @@ function elro.cmd_return(arg)
     cecho("\n<red>[elro]: no mark called '" .. name .. "'. 'mapmark" .. (name == "here" and "" or (" " .. name))
           .. "' sets it where you stand; 'mapmarks' lists them.\n<reset>") return
   end
-  if id == elro.walk_origin() then cecho("\n<green>[elro]: you are at '" .. name .. "'.\n<reset>") return end
+  if id == (elro.walk_busy() and elro.walkTarget or elro.current) then
+    cecho("\n<green>[elro]: you are at '" .. name .. "'.\n<reset>") return
+  end
   elro.gotoRoom(id)
 end
 function elro.cmd_unmark(arg)
@@ -5432,7 +5525,7 @@ local HELP_ADV = {
   { "mapprofile [on|off|ms]","time the phases of each move (graph / terrain / guess / relayout / view) and print the ones over <ms>; for finding what a slow move is actually doing" },
   { "mapecho [on|off]",   "should a relayout report when it finishes (time, frames, the solver's profile)? Off by default, and then no relayout prints anything" },
   { "mapoff [id]",        "what is recorded for a room about exits that leave the map: the record, the stubs, the custom lines" },
-  { "mapack",             "tell the game which client this is, again. Needed only if 'maplink' says no client has answered" },
+  { "mapack",             "tell the game which client this is, again. Needed only if 'nmp' says no client has answered" },
   { "mapaudit [all]",     "exits whose geometry the trustworthy (walked-both-ways) exits refute -- usually mistyped links" },
   { "mapedges [<id>]",    "outgoing and incoming edges for a room (default: current)" },
   { "mapmut [<id>]",      "per-exit mutation counters and lock state (default: current room)" },
@@ -5477,7 +5570,7 @@ local HELP_SHARE = {
   "",
   "The file carries everything: rooms, exits, the special exits you recorded, terrain, merges, "
     .. "folds and the rooms speedwalks keep out of. Only the map window's size and corner "
-    .. "belong to the profile. The receiving profile needs this package too, and 'maplink on' "
+    .. "belong to the profile. The receiving profile needs this package too, and 'nmp on' "
     .. "in the game to keep mapping.",
   "",
   "A map shows where you have been. Handing one over hands over that exploring.",
@@ -5527,7 +5620,7 @@ function elro.map_help(arg)
         .. (adv and "advanced commands" or "everyday commands") .. "\n")
   -- two help systems, and a new player cannot tell which is which
   for _, l in ipairs(elro.wrap_text("These commands belong to this Mudlet package and are never "
-      .. "sent to the game. The game's own side is 'help maplink' (switching the stream on and "
+      .. "sent to the game. The game's own side is 'help nmp' (switching the stream on and "
       .. "off).", width - 3)) do
     cecho("<cyan>  " .. l .. "<reset>\n")
   end
@@ -5745,15 +5838,20 @@ function elro.goto_target(arg)
   if arg:match("^%d+$") then elro.gotoRoom(tonumber(arg)) else elro.goto_area(arg) end
 end
 
--- Where the next walk starts: the end of a walk still in flight, else the room we are in.
--- 'mapreturn shop;z;mapreturn' on one line asks for the second walk before a single !MAP
--- of the first has come back; planned from the map's idea of "here" it would go nowhere.
-function elro.walk_origin()
-  local t = elro.walkTarget
-  if t and t ~= elro.current and roomExists(t) and os.time() - (elro.walkTargetAt or 0) < 60 then
-    return t
+-- A !NMP arrived for room id. With a walk in flight: the step landed where planned
+-- (send the next, or done if it was the last), or somewhere else (a push, a fall:
+-- the plan is void).
+function elro.walk_seen(id)
+  local q = elro.walkQueue
+  if not q or not elro.walkTarget then return end
+  local nxt = q[elro.walkAt + 1]
+  if nxt and id == nxt.to then
+    elro.walkAt, elro.walkLast = elro.walkAt + 1, elro.now_ms()
+    if elro.walkAt >= #q then elro.walk_end(false) end
+    return
   end
-  return elro.current
+  if elro.walkPath and elro.walkPath[id] then return end
+  elro.walk_end(true)
 end
 
 function elro.gotoRoom(target)
@@ -5763,10 +5861,18 @@ function elro.gotoRoom(target)
   if not elro.current then
     cecho("\n<red>[elro]: current room unknown; move once first.\n<reset>") return
   end
-  local from = elro.walk_origin()
+  -- off the map the last mapped room is not where we are: no path starts here
+  if elro.offmap then
+    cecho("\n<red>[elro]: you are off the map; walk back onto it first.\n<reset>") return
+  end
+  -- a walk asked for while one is running is planned from that one's end, so
+  -- that it can go out at once and keep its place in the order typed
+  -- ('mapmark here;shop;sell;mapreturn' on one line). The end is the plan's,
+  -- not a position: position is only ever what the !NMP lines said.
+  local from = elro.walk_busy() and elro.walkTarget or elro.current
   if from == target then return end
   if getPath(from, target) then
-    elro.walkTarget, elro.walkTargetAt = target, os.time()
+
     elro.walk_steps(speedWalkDir, speedWalkPath, from)
   else
     cecho("\n<red>[elro]: no known path to " .. target .. ".\n<reset>")

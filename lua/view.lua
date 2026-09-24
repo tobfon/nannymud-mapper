@@ -97,7 +97,7 @@ local function render(full)
 end
 
 -- Called from recenter on every move and at the end of a relayout (`always`). Deferred out of
--- the !MAP trigger: a large label repaint while the console is still painting the room's text
+-- the !NMP trigger: a large label repaint while the console is still painting the room's text
 -- lost whole rows of it (never drawn, scrolled up as blank lines). Several calls in one
 -- moment collapse into one draw.
 function elro.mapview_refresh(full)

@@ -1,7 +1,7 @@
 # nannymud-mapper
 
 Client-side automap for [NannyMUD](https://nannymud.lysator.liu.se/). A Mudlet package that
-computes each area's layout in Lua from the server's `!MAP` event feed.
+computes each area's layout in Lua from the server's NMP feed (NannyMUD Map Protocol, one `!NMP` line per move).
 
 The server sends one line per move — room id, where you came from, the direction, the exits.
 It does no rendering and stores no coordinates. Everything you see is solved on the client:
@@ -47,12 +47,12 @@ from its right-click menu; `mapwin lock` does the same job and has not caused it
 for them, because without this package they are a line of text on every move:
 
 ```
-maplink on       start streaming; remembered when you log in again
-maplink          what it is doing, and whether this package has answered
-maplink off      stop streaming
+nmp on           start streaming; remembered when you log in again
+nmp              what it is doing, and whether this package has answered
+nmp off          stop streaming
 ```
 
-`help maplink` in game has the rest. The `maplink` command is being rolled out; if the game
+`help nmp` in game has the rest. The `nmp` command is being rolled out; if the game
 answers "What?", you do not have it yet, and Elrohir can hand it to you. Not every area is
 mapped: the administrators open them one at a time.
 
@@ -90,7 +90,7 @@ into it. `maphelp share` says the same in the client.
 
 ## Using it with another MUD
 
-The `!MAP` trigger is only an adapter. The integration point is one function:
+The `!NMP` trigger is only an adapter. The integration point is one function:
 
 ```lua
 elro.onRoom(id, fromId, dir, name, area, exits, terr)

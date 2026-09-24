@@ -147,7 +147,7 @@ end
 -- build (crooms, adj) from the map-viewer selection if any, else the current
 -- room's whole area. Shared by the SPQR test commands.
 function elro.sel_or_area()
-  -- selection first, so this works OFFLINE (no !MAP -> no elro.current needed)
+  -- selection first, so this works OFFLINE (no !NMP -> no elro.current needed)
   local sel = (type(getMapSelection) == "function") and (getMapSelection() or {}) or {}
   local ids = sel.rooms or sel
   if type(ids) == "table" and next(ids) ~= nil then

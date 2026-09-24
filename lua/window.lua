@@ -188,7 +188,19 @@ local function dock_close()
   pcall(closeMapWidget)
   elro._dockOpen = false
 end
-local function dock_first_marker() return getMudletHomeDir() .. "/elro_export/.mapwin_seen" end
+-- Whether the player closed the docked map with 'mapwin': the one state Mudlet does not
+-- keep for us across restarts. The file exists while it is closed by choice.
+local function dock_closed_marker() return getMudletHomeDir() .. "/elro_export/.mapwin_closed" end
+local function dock_remember(closed)
+  local dir = getMudletHomeDir() .. "/elro_export"
+  if lfs and lfs.mkdir then pcall(lfs.mkdir, dir) end
+  if closed then
+    local f = io.open(dock_closed_marker(), "w")
+    if f then f:write(os.date()) ; f:close() end
+  else
+    pcall(os.remove, dock_closed_marker())
+  end
+end
 
 function elro.mapwin(arg)
   if type(openMapWidget) ~= "function" or type(closeMapWidget) ~= "function" then
@@ -211,8 +223,8 @@ function elro.mapwin(arg)
         .. "or 'mapwin embed' to use the small window now.")
       return
     end
-    if elro._dockOpen then dock_close() else
-      dock_open()
+    if elro._dockOpen then dock_close() ; dock_remember(true) else
+      dock_open() ; dock_remember(false)
       say("map open. Drag its title bar to float it, or dock it to a side; 'mapwin' again "
         .. "closes it. 'mapwin embed' is the small window over the text instead.")
     end
@@ -280,16 +292,22 @@ function elro.mapwin_boot()
     show()
     return
   end
-  -- otherwise Mudlet's own map, opened once on a first install; after that Mudlet restores
-  -- whatever the player left, as it does for the Map button
-  if io.exists(dock_first_marker()) or type(openMapWidget) ~= "function" then return end
-  local dir = getMudletHomeDir() .. "/elro_export"
-  if lfs and lfs.mkdir then pcall(lfs.mkdir, dir) end
-  local f = io.open(dock_first_marker(), "w")
-  if f then f:write(os.date()) ; f:close() end
+  -- otherwise Mudlet's own map, at every start unless the player closed it with 'mapwin'
+  -- (Mudlet does not restore the dock's open state itself; a close by the Map button
+  -- leaves no event and is reopened, one keystroke)
+  if io.exists(dock_closed_marker()) or type(openMapWidget) ~= "function" then return end
+  local first = not io.exists(getMudletHomeDir() .. "/elro_export/.mapwin_seen")
+  if first then
+    local dir = getMudletHomeDir() .. "/elro_export"
+    if lfs and lfs.mkdir then pcall(lfs.mkdir, dir) end
+    local f = io.open(dir .. "/.mapwin_seen", "w")
+    if f then f:write(os.date()) ; f:close() end
+  end
   dock_open()
-  say("this is the map. Drag its title bar to float it or dock it to a side; the Map button "
-    .. "or 'mapwin' closes it, 'maphelp' has the rest.")
+  if first then
+    say("this is the map. Drag its title bar to float it or dock it to a side; the Map button "
+      .. "or 'mapwin' closes it, 'maphelp' has the rest.")
+  end
 end
 
 -- A reload or reinstall keeps the window (elro survives) but not this module's timer chain.

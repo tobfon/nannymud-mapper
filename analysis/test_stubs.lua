@@ -200,7 +200,7 @@ elro.onRoom(1, 0, "none", "Hall", "t", "north,south,east,west", "indoors")
 ok(count(1) == 0, "elro.exitStubs = false creates none at all")
 elro.exitStubs = true
 
-print("an exit that leaves the map (!MAP id=0) is not a stub")
+print("an exit that leaves the map (!NMP id=0) is not a stub")
 fresh()
 local LINES = {}
 _G.addCustomLine = function(id, pts, d, style, col) LINES[id .. ":" .. d] = col or true end
